@@ -42,7 +42,7 @@ const server = http.createServer((req, res) => {
 
   if (requestUrl.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, version: '0.3.0', transport: 'websocket' }));
+    res.end(JSON.stringify({ ok: true, version: '0.4.0', transport: 'webrtc-with-websocket-fallback' }));
     return;
   }
 
@@ -76,10 +76,12 @@ function roomStatus(room) {
   const members = rooms.get(room) ?? new Set();
   let tv = false;
   let phone = false;
+
   for (const client of members) {
     if (client.role === 'tv') tv = true;
     if (client.role === 'phone') phone = true;
   }
+
   return { tv, phone };
 }
 
@@ -91,9 +93,10 @@ function sendJson(client, message) {
 function broadcast(room, message, except = null) {
   const members = rooms.get(room);
   if (!members) return;
-  const serialized = JSON.stringify(message);
+
+  const encoded = JSON.stringify(message);
   for (const client of members) {
-    if (client !== except && client.readyState === WebSocket.OPEN) client.send(serialized);
+    if (client !== except && client.readyState === WebSocket.OPEN) client.send(encoded);
   }
 }
 
@@ -104,12 +107,14 @@ function broadcastRoomStatus(room) {
 
 function removeFromRoom(client) {
   if (!client.room) return;
+
   const oldRoom = client.room;
   const members = rooms.get(oldRoom);
   if (members) {
     members.delete(client);
     if (members.size === 0) rooms.delete(oldRoom);
   }
+
   client.room = '';
   client.role = '';
   broadcastRoomStatus(oldRoom);
@@ -119,6 +124,7 @@ function addToRoom(client, room, role) {
   removeFromRoom(client);
   client.room = room;
   client.role = role;
+
   const members = rooms.get(room) ?? new Set();
   members.add(client);
   rooms.set(room, members);
@@ -138,6 +144,7 @@ function handleMessage(client, rawMessage) {
   if (type === 'join') {
     const room = cleanRoom(payload.room);
     const role = payload.role;
+
     if (room.length < 4 || !['tv', 'phone'].includes(role)) {
       sendJson(client, {
         type: 'response',
@@ -153,6 +160,12 @@ function handleMessage(client, rawMessage) {
       replyTo: id,
       payload: { ok: true, room, status: roomStatus(room) }
     });
+    return;
+  }
+
+  if (type === 'rtc-signal') {
+    if (!client.room) return;
+    broadcast(client.room, { type: 'rtc-signal', payload }, client);
     return;
   }
 
