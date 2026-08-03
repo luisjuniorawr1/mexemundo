@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#087f5b" />
+  <title>MexeMundo — Goleiro Maluco</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/goalkeeper.css" />
+</head>
+<body class="tv-page goalkeeper-page">
+  <header class="topbar tv-topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark">M</span>
+      <div><strong>MexeMundo</strong><small>Goleiro Maluco</small></div>
+    </div>
+    <div class="top-actions">
+      <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
+      <a class="icon-button home-button" href="/" aria-label="Voltar aos jogos">⌂</a>
+      <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
+    </div>
+  </header>
+
+  <main class="tv-layout">
+    <section class="game-shell" aria-label="Área do jogo Goleiro Maluco">
+      <canvas id="gameCanvas"></canvas>
+
+      <div id="scoreHud" class="score-hud goalkeeper-hud hidden">
+        <div class="hud-pill"><span>Defesas</span><strong id="saveValue">0</strong></div>
+        <div class="hud-pill time"><span>Tempo</span><strong id="timeValue">45</strong></div>
+        <div class="hud-pill combo"><span>Sequência</span><strong id="streakValue">x0</strong></div>
+        <div class="hud-pill goals"><span>Gols</span><strong id="goalValue">0</strong></div>
+      </div>
+
+      <section id="pairPanel" class="modal-card pair-panel">
+        <div class="mascot">🥅</div>
+        <span class="eyebrow">GOLEIRO MALUCO</span>
+        <h2>Conecte o celular para defender</h2>
+        <p>Abra <strong>/celular</strong> usando o mesmo endereço e digite:</p>
+        <div id="roomCode" class="room-code">----</div>
+        <p class="room-hint">O vídeo continua somente no celular. A tela recebe os pontos das mãos.</p>
+      </section>
+
+      <section id="calibrationPanel" class="modal-card calibration-panel hidden">
+        <div class="mascot">🧤</div>
+        <span class="eyebrow">AQUECIMENTO</span>
+        <h2>Mostre as duas mãos e levante os braços</h2>
+        <p>Fique de frente para o celular, com espaço livre para defender para os dois lados.</p>
+        <div class="calibration-meter"><span id="calibrationProgress"></span></div>
+        <strong id="calibrationMessage">Procurando o goleiro…</strong>
+      </section>
+
+      <section id="countdownPanel" class="countdown-panel hidden" aria-live="assertive">
+        <span id="countdownValue">3</span>
+      </section>
+
+      <section id="resultPanel" class="modal-card result-panel hidden">
+        <div class="result-stars">🧤 ⚽ 🧤</div>
+        <span class="eyebrow">FIM DA PARTIDA</span>
+        <h2 id="resultTitle">Que goleiro!</h2>
+        <div class="goal-result-grid">
+          <div class="goal-stat"><strong id="finalSaveValue">0</strong><span>defesas</span></div>
+          <div class="goal-stat danger"><strong id="finalGoalValue">0</strong><span>gols sofridos</span></div>
+        </div>
+        <p id="resultMessage">Você protegeu muito bem o gol!</p>
+        <button id="restartButton" class="button primary" type="button">Jogar novamente</button>
+        <p class="gesture-tip">Também dá para levantar as duas mãos por 2 segundos.</p>
+      </section>
+
+      <div id="saveCallout" class="goalkeeper-callout hidden" aria-live="polite">DEFESA!</div>
+      <div class="safe-zone-hint goalkeeper-tip">Defenda com as duas mãos 🧤</div>
+
+      <details class="diagnostics">
+        <summary>Diagnóstico</summary>
+        <div>FPS <strong id="fpsValue">0</strong></div>
+        <div>Rede <strong id="networkValue">-- ms</strong></div>
+        <div>Pose <strong id="poseValue">não detectada</strong></div>
+      </details>
+    </section>
+  </main>
+
+  <script type="module" src="/js/goalkeeper.js"></script>
+</body>
+</html>
