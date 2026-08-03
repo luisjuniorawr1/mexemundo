@@ -1,0 +1,85 @@
+name: Aplicar área segura
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-safe-area.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Aplicar margem segura e estabilidade visual
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('public/js/tv.js')
+          source = path.read_text()
+
+          def replace_once(old, new, label):
+              global source
+              if source.count(old) != 1:
+                  raise SystemExit(f'Trecho inesperado em {label}: {source.count(old)} ocorrências')
+              source = source.replace(old, new, 1)
+
+          replace_once(
+              "const POSE_TIMEOUT_MS = 240;",
+              "const POSE_TIMEOUT_MS = 240;\nconst PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88, top: 0.10, bottom: 0.86 });",
+              'constante da área segura'
+          )
+
+          replace_once(
+              "function randomBetween(min, max) {\n  return min + Math.random() * (max - min);\n}\n",
+              "function randomBetween(min, max) {\n  return min + Math.random() * (max - min);\n}\n\nfunction getPlayBounds(width, height, radius = 0) {\n  return {\n    left: width * PLAY_AREA.left + radius,\n    right: width * PLAY_AREA.right - radius,\n    top: height * PLAY_AREA.top + radius,\n    bottom: height * PLAY_AREA.bottom - radius\n  };\n}\n",
+              'limites da área segura'
+          )
+
+          replace_once(
+              "function spawnBalloon(width, height, now) {\n  const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));\n  const special = Math.random() < 0.12;\n  balloons.push({\n    id: `${now}-${Math.random()}`,\n    x: randomBetween(radius * 1.6, width - radius * 1.6),\n    y: height + radius * 1.5,\n    radius: special ? radius * 1.15 : radius,\n",
+              "function spawnBalloon(width, height, now) {\n  const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));\n  const special = Math.random() < 0.12;\n  const finalRadius = special ? radius * 1.15 : radius;\n  const bounds = getPlayBounds(width, height, finalRadius);\n  balloons.push({\n    id: `${now}-${Math.random()}`,\n    x: randomBetween(bounds.left, bounds.right),\n    y: bounds.bottom,\n    radius: finalRadius,\n",
+              'nascimento dos balões'
+          )
+
+          replace_once(
+              "  for (const balloon of balloons) {\n    balloon.y -= balloon.speed * seconds;\n    balloon.x += (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds;\n  }\n",
+              "  for (const balloon of balloons) {\n    const bounds = getPlayBounds(width, height, balloon.radius);\n    balloon.y -= balloon.speed * seconds;\n    balloon.x = clamp(\n      balloon.x + (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds,\n      bounds.left,\n      bounds.right\n    );\n  }\n",
+              'movimento lateral dos balões'
+          )
+
+          replace_once(
+              "if (balloon.y + balloon.radius < -20) {",
+              "if (balloon.y <= height * PLAY_AREA.top + balloon.radius) {",
+              'limite superior'
+          )
+
+          replace_once(
+              "    const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);\n    const lead = isWrist ? Math.min(0.032, 0.008 + packetAge) : 0;\n    const desiredX = clamp(source.x + source.vx * lead * 0.55);\n    const desiredY = clamp(source.y + source.vy * lead * 0.55);\n    const distance = Math.hypot(desiredX - current.x, desiredY - current.y);\n\n    if (isWrist) {\n      if (!motion.detected || distance > 0.0015 || speed > 0.08) {\n        current.x = desiredX;\n        current.y = desiredY;\n      }\n",
+              "    const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);\n    const lead = isWrist && speed > 0.35 ? Math.min(0.024, 0.006 + packetAge) : 0;\n    const desiredX = clamp(source.x + source.vx * lead * 0.45);\n    const desiredY = clamp(source.y + source.vy * lead * 0.45);\n    const distance = Math.hypot(desiredX - current.x, desiredY - current.y);\n\n    if (isWrist) {\n      const movementThreshold = speed < 0.14 ? 0.0032 : speed < 0.38 ? 0.0018 : 0.0008;\n      if (!motion.detected || distance > movementThreshold) {\n        current.x = desiredX;\n        current.y = desiredY;\n      }\n",
+              'estabilidade visual da TV'
+          )
+
+          path.write_text(source)
+
+          package = Path('package.json')
+          package.write_text(package.read_text().replace('"version": "0.6.0"', '"version": "0.6.1"', 1))
+
+          server = Path('server.js')
+          server.write_text(server.read_text().replace("version: '0.6.0'", "version: '0.6.1'", 1))
+
+      - name: Verificar sintaxe
+        run: npm run check
+
+      - name: Publicar ajustes
+        run: |
+          git config user.name "MexeMundo Bot"
+          git config user.email "actions@users.noreply.github.com"
+          rm .github/workflows/apply-safe-area.yml
+          git add public/js/tv.js package.json server.js .github/workflows/apply-safe-area.yml
+          git commit -m "Adiciona área segura e estabilização fina"
+          git push
