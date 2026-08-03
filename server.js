@@ -44,8 +44,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.7.0',
+      version: '0.8.0',
       games: ['balloons', 'goalkeeper'],
+      interaction: 'calibrated-hand-cursor',
       transport: 'webrtc-dual-channel-adaptive'
     }));
     return;

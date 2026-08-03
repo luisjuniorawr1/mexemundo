@@ -1,7 +1,13 @@
 import { RealtimeClient } from './realtime.js';
+import {
+  MotionCursor,
+  calibratedDeadZone,
+  getPersistentRoom,
+  roomHref
+} from './motion-ui.js';
 
 const socket = new RealtimeClient();
-const room = Math.random().toString(36).slice(2, 6).toUpperCase();
+const room = getPersistentRoom();
 const roomCode = document.querySelector('#roomCode');
 const pairPanel = document.querySelector('#pairPanel');
 const calibrationPanel = document.querySelector('#calibrationPanel');
@@ -24,6 +30,8 @@ const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const fpsValue = document.querySelector('#fpsValue');
 const networkValue = document.querySelector('#networkValue');
 const poseValue = document.querySelector('#poseValue');
+const motionCursorElement = document.querySelector('#motionCursor');
+const backButton = document.querySelector('#backButton');
 
 const GAME_SECONDS = 45;
 const POSE_TIMEOUT_MS = 240;
@@ -34,6 +42,9 @@ const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '
 const BALLOON_SYMBOLS = ['★', '♥', '●', '✦', '♪'];
 const backgroundCanvas = document.createElement('canvas');
 const backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
+const motionCursor = new MotionCursor({ element: motionCursorElement, dwellMs: 950, enabled: false });
+const sessionDeadZone = Math.min(0.0065, calibratedDeadZone(0.004));
+backButton.href = roomHref('/', room);
 
 roomCode.textContent = room;
 await socket.connect();
@@ -156,6 +167,7 @@ function setState(next) {
   countdownPanel.classList.toggle('hidden', next !== 'countdown');
   resultPanel.classList.toggle('hidden', next !== 'result');
   scoreHud.classList.toggle('hidden', next !== 'playing');
+  motionCursor.setEnabled(phoneConnected && (next === 'calibrating' || next === 'result'));
 
   if (next !== 'calibrating') {
     calibrationStartedAt = 0;
@@ -195,6 +207,7 @@ socket.on('transport', ({ mode, rtt = 0 }) => {
 socket.on('pose', (data) => {
   target = normalizePose(data);
   posePackets += 1;
+  if (state !== 'playing' && state !== 'countdown') motionCursor.updatePose(data);
 });
 
 setInterval(async () => {
@@ -478,7 +491,11 @@ function updateMotion(now, dt) {
     const distance = Math.hypot(desiredX - current.x, desiredY - current.y);
 
     if (isWrist) {
-      const movementThreshold = speed < 0.14 ? 0.0032 : speed < 0.38 ? 0.0018 : 0.0008;
+      const movementThreshold = speed < 0.14
+        ? Math.max(0.0032, sessionDeadZone)
+        : speed < 0.38
+          ? Math.max(0.0018, sessionDeadZone * 0.45)
+          : 0.0008;
       if (!motion.detected || distance > movementThreshold) {
         current.x = desiredX;
         current.y = desiredY;

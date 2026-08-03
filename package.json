@@ -1,12 +1,12 @@
 {
   "name": "mexemundo",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/tv.js && node --check public/js/phone.js && node --check public/js/goalkeeper.js"
+    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/motion-ui.js && node --check public/js/menu.js && node --check public/js/tv.js && node --check public/js/goalkeeper.js && node --check public/js/phone.js"
   },
   "engines": {
     "node": ">=18"
