@@ -1,4 +1,5 @@
 import { RealtimeClient } from './realtime.js';
+import { MotionEngine, installMotionDebug } from './motion-engine.js';
 import {
   MotionCursor,
   buildMotionProfile,
@@ -26,12 +27,14 @@ roomCode.textContent = room;
 for (const link of gameLinks) link.href = roomHref(link.dataset.gamePath, room);
 
 const cursor = new MotionCursor({ element: cursorElement, dwellMs: 850, enabled: false });
+const motionEngine = new MotionEngine({ profile: 'menu', calibration: getMotionProfile() });
 let phoneConnected = false;
 let transportMode = 'relay';
+let transportRtt = 0;
 let state = 'pairing';
 let samples = [];
 let stableSince = 0;
-let lastPose = null;
+let lastCalibrationSequence = null;
 
 function setState(next) {
   state = next;
@@ -48,6 +51,7 @@ function showMenu() {
     return;
   }
   cursor.setProfile(profile);
+  motionEngine.setCalibration(profile);
   calibrationProgress.style.width = '0%';
   setState('menu');
 }
@@ -55,6 +59,7 @@ function showMenu() {
 function startCalibration() {
   samples = [];
   stableSince = 0;
+  lastCalibrationSequence = null;
   calibrationProgress.style.width = '0%';
   calibrationMessage.textContent = 'Segure a mão direita no centro e fique parado.';
   setState('calibrating');
@@ -100,6 +105,7 @@ function updateCalibration(pose, now) {
   try {
     const profile = buildMotionProfile(samples);
     cursor.setProfile(profile);
+    motionEngine.setCalibration(profile);
     calibrationMessage.textContent = 'Calibração pronta!';
     setTimeout(showMenu, 260);
   } catch (error) {
@@ -116,6 +122,7 @@ socket.on('room-status', ({ phone }) => {
   connectionBadge.className = `badge ${phoneConnected ? 'online' : 'waiting'}`;
 
   if (!phoneConnected) {
+    motionEngine.reset();
     setState('pairing');
     return;
   }
@@ -124,22 +131,37 @@ socket.on('room-status', ({ phone }) => {
   else startCalibration();
 });
 
-socket.on('transport', ({ mode }) => {
+socket.on('transport', ({ mode, rtt = 0 }) => {
   transportMode = mode;
+  transportRtt = Number(rtt) || 0;
+  motionEngine.setTransportMetrics({ mode, rtt: transportRtt });
   if (!phoneConnected) return;
   connectionBadge.textContent = mode === 'direct' ? 'Conexão direta' : 'Modo servidor';
   connectionBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
 socket.on('pose', (pose) => {
-  lastPose = pose;
-  const now = performance.now();
-  if (state === 'calibrating') updateCalibration(pose, now);
-  if (state === 'menu') cursor.updatePose(pose, now);
+  if (!motionEngine.replayActive) motionEngine.ingest(pose);
 });
+
+socket.on('pose-stream-reset', () => motionEngine.reset());
+
+socket.on('quality', (quality) => motionEngine.setTransportMetrics(quality));
+
+setInterval(async () => {
+  try {
+    const startedAt = performance.now();
+    await socket.request('ping-latency', { sentAt: Date.now() }, 1800);
+    transportRtt = Math.round(performance.now() - startedAt);
+    motionEngine.setTransportMetrics({ mode: transportMode, rtt: transportRtt });
+  } catch {
+    // O diagnóstico não deve interferir no menu.
+  }
+}, 1500);
 
 socket.on('disconnect', () => {
   phoneConnected = false;
+  motionEngine.reset();
   connectionBadge.textContent = 'Servidor desconectado';
   connectionBadge.className = 'badge waiting';
   setState('pairing');
@@ -147,6 +169,7 @@ socket.on('disconnect', () => {
 
 recalibrateButton.addEventListener('click', () => {
   clearMotionProfile();
+  motionEngine.setCalibration(null);
   startCalibration();
 });
 
@@ -169,6 +192,16 @@ if (phoneConnected) {
   setState('pairing');
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && state === 'menu' && lastPose) cursor.updatePose(lastPose);
-});
+installMotionDebug(motionEngine);
+
+function frame(now) {
+  const snapshot = motionEngine.sample(now);
+  if (state === 'calibrating' && snapshot.received.sequence !== lastCalibrationSequence) {
+    lastCalibrationSequence = snapshot.received.sequence;
+    updateCalibration(snapshot.received, now);
+  }
+  if (state === 'menu') cursor.updatePose(snapshot.visual, now);
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);

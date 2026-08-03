@@ -9,18 +9,21 @@ const POSE_POINTS = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const POSE_PACKET_BYTES = 8 + POSE_POINTS.length * 8;
 const UINT16_RANGE = 0x10000;
 const UINT16_HALF_RANGE = 0x8000;
+// Uma pose que esperou mais que isto em qualquer mailbox local perdeu valor
+// interativo e deve ser descartada, mesmo que o transporte volte a drenar.
+const PENDING_POSE_MAX_AGE_MS = 220;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function isNewerSequence(next, previous) {
+export function isNewerSequence(next, previous) {
   if (previous === null) return true;
   const difference = (next - previous + UINT16_RANGE) % UINT16_RANGE;
   return difference > 0 && difference < UINT16_HALF_RANGE;
 }
 
-function encodePose(payload) {
+export function encodePose(payload) {
   const buffer = new ArrayBuffer(POSE_PACKET_BYTES);
   const view = new DataView(buffer);
   let flags = payload.detected ? 1 : 0;
@@ -50,7 +53,7 @@ function encodePose(payload) {
   return buffer;
 }
 
-function decodePose(buffer) {
+export function decodePose(buffer) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== POSE_PACKET_BYTES) return null;
 
   const view = new DataView(buffer);
@@ -95,6 +98,10 @@ export class RealtimeClient {
     this.reliableChannel = null;
     this.pendingCandidates = [];
     this.pendingPosePacket = null;
+    this.pendingPosePacketAt = 0;
+    this.pendingRelayPose = null;
+    this.pendingRelayPoseAt = 0;
+    this.relayPoseFlushTimer = null;
     this.peerStarting = false;
     this.retryTimer = null;
 
@@ -104,8 +111,12 @@ export class RealtimeClient {
     this.lastPoseAt = 0;
     this.poseIntervalMs = 0;
     this.poseReceived = 0;
-    this.poseDropped = 0;
+    this.poseSequenceGaps = 0;
+    this.poseOutOfOrderOrDuplicate = 0;
+    this.poseCoalesced = 0;
+    this.poseExpired = 0;
     this.lastQualityDispatchAt = 0;
+    this.qualityDispatchTimer = null;
   }
 
   async connect() {
@@ -156,6 +167,7 @@ export class RealtimeClient {
 
     this.socket.addEventListener('close', () => {
       this.closePeer();
+      this.clearPendingRelayPose();
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timeout);
         pending.reject(new Error('A conexão foi encerrada.'));
@@ -166,11 +178,16 @@ export class RealtimeClient {
   }
 
   resetPoseStream() {
+    clearTimeout(this.qualityDispatchTimer);
+    this.qualityDispatchTimer = null;
     this.lastPoseSequence = null;
     this.lastPoseAt = 0;
     this.poseIntervalMs = 0;
     this.poseReceived = 0;
-    this.poseDropped = 0;
+    this.poseSequenceGaps = 0;
+    this.poseOutOfOrderOrDuplicate = 0;
+    this.poseCoalesced = 0;
+    this.poseExpired = 0;
     this.lastQualityDispatchAt = 0;
   }
 
@@ -179,9 +196,14 @@ export class RealtimeClient {
     if (Number.isFinite(sequence)) {
       const normalizedSequence = sequence & 0xffff;
       if (!isNewerSequence(normalizedSequence, this.lastPoseSequence)) {
-        this.poseDropped += 1;
+        this.poseOutOfOrderOrDuplicate += 1;
         this.dispatchQuality();
         return;
+      }
+
+      if (this.lastPoseSequence !== null) {
+        const difference = (normalizedSequence - this.lastPoseSequence + UINT16_RANGE) % UINT16_RANGE;
+        this.poseSequenceGaps += Math.max(0, difference - 1);
       }
       this.lastPoseSequence = normalizedSequence;
     }
@@ -201,18 +223,42 @@ export class RealtimeClient {
   }
 
   dispatchQuality(now = performance.now()) {
-    if (now - this.lastQualityDispatchAt < 750) return;
+    if (this.lastQualityDispatchAt && now - this.lastQualityDispatchAt < 750) {
+      if (!this.qualityDispatchTimer) {
+        const remaining = 750 - (now - this.lastQualityDispatchAt);
+        this.qualityDispatchTimer = setTimeout(() => {
+          this.qualityDispatchTimer = null;
+          this.dispatchQuality();
+        }, remaining);
+        this.qualityDispatchTimer.unref?.();
+      }
+      return;
+    }
+    clearTimeout(this.qualityDispatchTimer);
+    this.qualityDispatchTimer = null;
     this.lastQualityDispatchAt = now;
 
-    const total = this.poseReceived + this.poseDropped;
+    const dropped = this.poseSequenceGaps
+      + this.poseOutOfOrderOrDuplicate
+      + this.poseCoalesced
+      + this.poseExpired;
+    const total = this.poseReceived + dropped;
+    const directOpen = this.transportMode === 'direct'
+      && this.poseChannel?.readyState === 'open';
     this.dispatch('quality', {
       mode: this.transportMode,
-      rtt: this.directRtt,
+      rtt: directOpen ? this.directRtt : undefined,
       packetIntervalMs: Math.round(this.poseIntervalMs || 0),
       received: this.poseReceived,
-      dropped: this.poseDropped,
-      dropRate: total ? this.poseDropped / total : 0,
-      bufferedAmount: this.poseChannel?.bufferedAmount ?? 0
+      dropped,
+      sequenceGaps: this.poseSequenceGaps,
+      outOfOrderOrDuplicate: this.poseOutOfOrderOrDuplicate,
+      coalesced: this.poseCoalesced,
+      expired: this.poseExpired,
+      dropRate: total ? dropped / total : 0,
+      bufferedAmount: directOpen
+        ? this.poseChannel.bufferedAmount
+        : (this.socket?.bufferedAmount ?? 0)
     });
   }
 
@@ -230,6 +276,15 @@ export class RealtimeClient {
       return;
     }
 
+    if (message.type === 'pose-stream-reset') {
+      if (this.role === 'tv') {
+        // Encerra imediatamente o DataChannel da origem anterior. Listeners de
+        // canais substituídos também verificam identidade antes de aceitar pose.
+        this.closePeer();
+      }
+      this.resetPoseStream();
+    }
+
     this.dispatch(message.type, message.payload);
   }
 
@@ -245,13 +300,30 @@ export class RealtimeClient {
   }
 
   emit(type, payload = {}) {
-    if (type === 'pose' && this.poseChannel?.readyState === 'open') {
+    if (type === 'pose') return this.emitPose(payload);
+    return this.emitReliable(type, payload);
+  }
+
+  countCoalescedPose() {
+    this.poseCoalesced += 1;
+    this.dispatchQuality();
+  }
+
+  countExpiredPose() {
+    this.poseExpired += 1;
+    this.dispatchQuality();
+  }
+
+  emitPose(payload) {
+    if (this.transportMode === 'direct' && this.poseChannel?.readyState === 'open') {
       const packet = encodePose(payload);
 
       // Canal sempre trabalha com o quadro mais recente. Se houver algo no
       // buffer, substitui a pose pendente em vez de criar uma fila atrasada.
-      if (this.poseChannel.bufferedAmount > 0) {
+      if (this.pendingPosePacket || this.poseChannel.bufferedAmount > 0) {
+        if (this.pendingPosePacket) this.countCoalescedPose();
         this.pendingPosePacket = packet;
+        this.pendingPosePacketAt = performance.now();
         return true;
       }
 
@@ -263,7 +335,68 @@ export class RealtimeClient {
       }
     }
 
-    return this.emitReliable(type, payload);
+    return this.emitRelayPose(payload);
+  }
+
+  emitRelayPose(payload) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false;
+
+    const serialized = JSON.stringify({ type: 'pose', payload });
+    if (this.pendingRelayPose || this.socket.bufferedAmount > 0) {
+      if (this.pendingRelayPose) this.countCoalescedPose();
+      this.pendingRelayPose = serialized;
+      this.pendingRelayPoseAt = performance.now();
+      this.scheduleRelayPoseFlush();
+      return true;
+    }
+
+    try {
+      this.socket.send(serialized);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  scheduleRelayPoseFlush() {
+    if (!this.pendingRelayPose || this.relayPoseFlushTimer) return;
+    this.relayPoseFlushTimer = setTimeout(() => {
+      this.relayPoseFlushTimer = null;
+      this.flushRelayPose();
+    }, 8);
+  }
+
+  flushRelayPose() {
+    if (!this.pendingRelayPose) return;
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      this.clearPendingRelayPose();
+      return;
+    }
+    if (performance.now() - this.pendingRelayPoseAt > PENDING_POSE_MAX_AGE_MS) {
+      this.clearPendingRelayPose();
+      this.countExpiredPose();
+      return;
+    }
+    if (this.socket.bufferedAmount > 0) {
+      this.scheduleRelayPoseFlush();
+      return;
+    }
+
+    const serialized = this.pendingRelayPose;
+    this.pendingRelayPose = null;
+    this.pendingRelayPoseAt = 0;
+    try {
+      this.socket.send(serialized);
+    } catch {
+      // O fechamento do socket descarta a pose, que já perdeu valor temporal.
+    }
+  }
+
+  clearPendingRelayPose() {
+    clearTimeout(this.relayPoseFlushTimer);
+    this.relayPoseFlushTimer = null;
+    this.pendingRelayPose = null;
+    this.pendingRelayPoseAt = 0;
   }
 
   emitReliable(type, payload = {}) {
@@ -283,11 +416,10 @@ export class RealtimeClient {
 
   async request(type, payload = {}, timeoutMs = 5000) {
     if (type === 'ping-latency' && this.poseChannel?.readyState === 'open') {
-      try {
-        return await this.directRequest(type, payload, Math.min(timeoutMs, 700));
-      } catch {
-        // O canal de movimento é não confiável de propósito.
-      }
+      // Não mistura o timeout do ping direto com um segundo RTT via servidor.
+      // O chamador registra a falha e a próxima amostra usa o estado de
+      // transporte que estiver ativo naquele momento.
+      return this.directRequest(type, payload, Math.min(timeoutMs, 700));
     }
 
     if (this.socket?.readyState !== WebSocket.OPEN) {
@@ -295,6 +427,9 @@ export class RealtimeClient {
     }
 
     if (type === 'join') {
+      this.pendingPosePacket = null;
+      this.pendingPosePacketAt = 0;
+      this.clearPendingRelayPose();
       this.room = String(payload.room ?? '').toUpperCase();
       this.role = payload.role ?? '';
       this.resetPoseStream();
@@ -373,14 +508,15 @@ export class RealtimeClient {
     this.pendingCandidates = [];
 
     peer.addEventListener('icecandidate', ({ candidate }) => {
-      if (candidate) this.sendSignal({ candidate });
+      if (this.peer === peer && candidate) this.sendSignal({ candidate });
     });
 
     peer.addEventListener('datachannel', ({ channel }) => {
-      this.attachChannel(channel);
+      if (this.peer === peer) this.attachChannel(channel);
     });
 
     peer.addEventListener('connectionstatechange', () => {
+      if (this.peer !== peer) return;
       const state = peer.connectionState;
       if (state === 'failed' || state === 'closed') {
         this.fallbackToRelay();
@@ -405,34 +541,34 @@ export class RealtimeClient {
   attachPoseChannel(channel) {
     this.poseChannel = channel;
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 1;
+    channel.bufferedAmountLowThreshold = 0;
 
     channel.addEventListener('open', () => {
+      if (this.poseChannel !== channel) return;
       this.transportMode = 'direct';
       this.pendingPosePacket = null;
-      this.resetPoseStream();
+      this.pendingPosePacketAt = 0;
+      this.clearPendingRelayPose();
       this.dispatch('transport', { mode: 'direct', rtt: this.directRtt });
     });
 
     channel.addEventListener('bufferedamountlow', () => {
-      if (!this.pendingPosePacket || channel.readyState !== 'open') return;
-      const packet = this.pendingPosePacket;
-      this.pendingPosePacket = null;
-      try {
-        channel.send(packet);
-      } catch {
-        this.fallbackToRelay();
-      }
+      if (this.poseChannel !== channel) return;
+      this.flushDirectPose(channel);
     });
 
     channel.addEventListener('close', () => {
+      if (this.poseChannel !== channel) return;
       this.fallbackToRelay();
       this.scheduleRetry();
     });
 
-    channel.addEventListener('error', () => this.fallbackToRelay());
+    channel.addEventListener('error', () => {
+      if (this.poseChannel === channel) this.fallbackToRelay();
+    });
 
     channel.addEventListener('message', (event) => {
+      if (this.poseChannel !== channel) return;
       if (event.data instanceof ArrayBuffer) {
         const pose = decodePose(event.data);
         if (pose) this.acceptPose(pose);
@@ -488,13 +624,36 @@ export class RealtimeClient {
     });
   }
 
+  flushDirectPose(channel = this.poseChannel) {
+    if (!this.pendingPosePacket || channel?.readyState !== 'open') return;
+
+    const packet = this.pendingPosePacket;
+    const queuedAt = this.pendingPosePacketAt;
+    this.pendingPosePacket = null;
+    this.pendingPosePacketAt = 0;
+
+    if (performance.now() - queuedAt > PENDING_POSE_MAX_AGE_MS) {
+      this.countExpiredPose();
+      return;
+    }
+
+    try {
+      channel.send(packet);
+    } catch {
+      this.fallbackToRelay();
+    }
+  }
+
   async startDirectConnection() {
     if (this.role !== 'tv' || !this.roomStatus.phone) return;
     if (this.poseChannel?.readyState === 'open' || this.peerStarting) return;
 
     this.peerStarting = true;
+    let peer = null;
     try {
-      const peer = this.createPeer();
+      peer = this.createPeer();
+      // createPeer fecha o peer anterior; reafirma o lock antes do primeiro await.
+      this.peerStarting = true;
 
       const poseChannel = peer.createDataChannel('mexemundo-pose', {
         ordered: false,
@@ -508,10 +667,12 @@ export class RealtimeClient {
       this.attachReliableChannel(reliableChannel);
 
       const offer = await peer.createOffer();
+      if (this.peer !== peer) return;
       await peer.setLocalDescription(offer);
+      if (this.peer !== peer) return;
       this.sendSignal({ description: peer.localDescription });
     } finally {
-      this.peerStarting = false;
+      if (!this.peer || this.peer === peer) this.peerStarting = false;
     }
   }
 
@@ -563,6 +724,8 @@ export class RealtimeClient {
   }
 
   fallbackToRelay() {
+    this.pendingPosePacket = null;
+    this.pendingPosePacketAt = 0;
     if (this.transportMode !== 'relay') {
       this.transportMode = 'relay';
       this.dispatch('transport', { mode: 'relay', rtt: 0 });
@@ -582,17 +745,21 @@ export class RealtimeClient {
     clearTimeout(this.retryTimer);
     this.retryTimer = null;
 
-    try { this.poseChannel?.close(); } catch {}
-    try { this.reliableChannel?.close(); } catch {}
-    try { this.peer?.close(); } catch {}
-
+    const poseChannel = this.poseChannel;
+    const reliableChannel = this.reliableChannel;
+    const peer = this.peer;
     this.poseChannel = null;
     this.reliableChannel = null;
     this.peer = null;
+
+    try { poseChannel?.close(); } catch {}
+    try { reliableChannel?.close(); } catch {}
+    try { peer?.close(); } catch {}
+
     this.pendingCandidates = [];
     this.pendingPosePacket = null;
+    this.pendingPosePacketAt = 0;
     this.peerStarting = false;
-    this.resetPoseStream();
 
     if (resetTransport) this.fallbackToRelay();
   }

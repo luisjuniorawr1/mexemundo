@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 
@@ -8,6 +9,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, 'public');
 const rooms = new Map();
+// Mailboxes de pose são efêmeras: depois de 220 ms, enviar a posição
+// atrasada é pior que esperar a próxima amostra latest-only.
+const PENDING_POSE_MAX_AGE_MS = 220;
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -110,12 +114,96 @@ function broadcast(room, message, except = null) {
   }
 }
 
+function clearPendingPose(client) {
+  clearTimeout(client.poseFlushTimer);
+  client.poseFlushTimer = null;
+  client.pendingPoseMessage = null;
+  client.pendingPoseMessageAt = 0;
+}
+
+function schedulePendingPose(client) {
+  if (!client.pendingPoseMessage || client.poseFlushTimer || client.poseSendInFlight) return;
+  client.poseFlushTimer = setTimeout(() => {
+    client.poseFlushTimer = null;
+    flushPendingPose(client);
+  }, 8);
+  client.poseFlushTimer.unref?.();
+}
+
+function sendPoseNow(client, serialized) {
+  if (client.readyState !== WebSocket.OPEN) {
+    clearPendingPose(client);
+    return;
+  }
+
+  client.poseSendInFlight = true;
+  try {
+    client.send(serialized, (error) => {
+      client.poseSendInFlight = false;
+      if (error || client.readyState !== WebSocket.OPEN) {
+        clearPendingPose(client);
+        return;
+      }
+      flushPendingPose(client);
+    });
+  } catch {
+    client.poseSendInFlight = false;
+    clearPendingPose(client);
+  }
+}
+
+function flushPendingPose(client) {
+  if (!client.pendingPoseMessage) return;
+  if (client.readyState !== WebSocket.OPEN) {
+    clearPendingPose(client);
+    return;
+  }
+  if (performance.now() - client.pendingPoseMessageAt > PENDING_POSE_MAX_AGE_MS) {
+    client.poseExpired += 1;
+    clearPendingPose(client);
+    return;
+  }
+  if (client.poseSendInFlight || client.bufferedAmount > 0) {
+    schedulePendingPose(client);
+    return;
+  }
+
+  const serialized = client.pendingPoseMessage;
+  client.pendingPoseMessage = null;
+  client.pendingPoseMessageAt = 0;
+  sendPoseNow(client, serialized);
+}
+
+function queueLatestPose(client, serialized) {
+  if (client.readyState !== WebSocket.OPEN) return;
+  if (client.poseSendInFlight || client.pendingPoseMessage || client.bufferedAmount > 0) {
+    if (client.pendingPoseMessage) client.poseCoalesced += 1;
+    client.pendingPoseMessage = serialized;
+    client.pendingPoseMessageAt = performance.now();
+    schedulePendingPose(client);
+    return;
+  }
+
+  sendPoseNow(client, serialized);
+}
+
+function broadcastLatestPose(room, payload, except = null) {
+  const members = rooms.get(room);
+  if (!members) return;
+
+  const serialized = JSON.stringify({ type: 'pose', payload });
+  for (const client of members) {
+    if (client !== except) queueLatestPose(client, serialized);
+  }
+}
+
 function broadcastRoomStatus(room) {
   if (!room) return;
   broadcast(room, { type: 'room-status', payload: roomStatus(room) });
 }
 
 function removeFromRoom(client) {
+  clearPendingPose(client);
   if (!client.room) return;
 
   const oldRoom = client.room;
@@ -149,6 +237,21 @@ function addToRoom(client, room, role) {
   client.role = role;
   members.add(client);
   rooms.set(room, members);
+
+  if (role === 'phone') {
+    for (const member of members) {
+      if (member.role === 'tv') clearPendingPose(member);
+    }
+    // A sequência uint16 pertence à instância da página do celular. Avise a TV
+    // antes das novas poses para que seq=1 não seja comparada à origem anterior.
+    // Limpar a mailbox impede que uma pose antiga pendente ultrapasse o reset.
+    broadcast(room, {
+      type: 'pose-stream-reset',
+      payload: { reason: 'phone-joined' }
+    }, client);
+  }
+
+  // O reset deve chegar antes do status que inicia a negociação com a nova origem.
   broadcastRoomStatus(room);
 
   for (const member of replaced) {
@@ -205,7 +308,7 @@ function handleMessage(client, rawMessage) {
 
   if (type === 'pose') {
     if (!client.room || client.role !== 'phone') return;
-    broadcast(client.room, { type: 'pose', payload }, client);
+    broadcastLatestPose(client.room, payload, client);
     return;
   }
 
@@ -235,6 +338,12 @@ webSocketServer.on('connection', (client, request) => {
   request.socket.setNoDelay(true);
   client.room = '';
   client.role = '';
+  client.poseSendInFlight = false;
+  client.pendingPoseMessage = null;
+  client.pendingPoseMessageAt = 0;
+  client.poseFlushTimer = null;
+  client.poseCoalesced = 0;
+  client.poseExpired = 0;
 
   client.on('message', (message) => handleMessage(client, message));
   client.on('close', () => removeFromRoom(client));

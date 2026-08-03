@@ -11,9 +11,15 @@ Plataforma infantil de minijogos corporais controlados pela câmera do celular.
 - O jogo **Estoura-Balões** possui calibração, rodada, pontuação, combo, efeitos, sons e reinício por gesto.
 - Há diagnóstico de FPS, pose e atraso estimado.
 
-## Núcleo Realtime 0.6
+## Núcleo de movimento
 
-A tecnologia de movimento foi separada em dois canais para servir de base aos próximos jogos:
+`MotionEngine` é a única tecnologia de movimento usada pelo menu e pelos jogos.
+Ele recebe as poses mais recentes, aplica estabilização adaptativa calibrada e
+mantém duas saídas: uma visual estável e uma trajetória rápida exclusiva para
+colisões. Os parâmetros, métricas e o protocolo de validação estão documentados em
+[`docs/motion-engine.md`](docs/motion-engine.md).
+
+A comunicação permanece separada em dois canais:
 
 ### Canal de movimento
 
@@ -71,6 +77,17 @@ O repositório inclui `render.yaml`. Ao conectar o projeto ao Render, o serviço
 
 ## Teste recomendado
 
+Execute primeiro a checagem de sintaxe, os testes de regressão e o comparador
+determinístico:
+
+```bash
+npm run check
+npm test
+npm run benchmark:motion
+```
+
+Depois valide em um celular real:
+
 1. Apoie o celular em um local firme.
 2. Use boa iluminação e evite contraluz.
 3. Deixe a parte superior do corpo e as duas mãos visíveis.
@@ -84,8 +101,6 @@ O vídeo é processado no navegador do celular. O servidor não recebe nem armaz
 
 ## Próximos passos
 
-- Extrair o rastreamento e a comunicação para módulos independentes de cada jogo.
 - Criar perfis automáticos conforme desempenho do aparelho.
 - Implementar gerenciador de vários jogadores por sala.
 - Criar sincronização de relógio e autoridade da partida.
-- Criar o segundo minijogo: Goleiro Maluco.

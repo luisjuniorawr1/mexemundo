@@ -88,7 +88,7 @@ export function buildMotionProfile(samples) {
   );
 
   return saveMotionProfile({
-    version: 1,
+    version: 2,
     centerX,
     centerY,
     scaleX: clamp(shoulderWidth * 2.75, 0.28, 0.72),
@@ -121,7 +121,6 @@ export class MotionCursor {
     this.profile = getMotionProfile();
     this.x = 0.5;
     this.y = 0.5;
-    this.lastUpdateAt = 0;
     this.hoverTarget = null;
     this.hoverStartedAt = 0;
     this.cooldownUntil = 0;
@@ -177,20 +176,10 @@ export class MotionCursor {
       return;
     }
 
-    const dt = this.lastUpdateAt ? clamp((now - this.lastUpdateAt) / 1000, 1 / 120, 0.08) : 1 / 60;
-    this.lastUpdateAt = now;
-    const dx = mapped.x - this.x;
-    const dy = mapped.y - this.y;
-    const distance = Math.hypot(dx, dy);
-    const profileDeadZone = this.profile?.deadZone ?? 0.006;
-    const screenDeadZone = clamp(profileDeadZone * 1.5, 0.006, 0.022);
-
-    if (distance > screenDeadZone) {
-      const speed = distance / dt;
-      const alpha = clamp(0.28 + speed * 0.18, 0.28, 0.94);
-      this.x += dx * alpha;
-      this.y += dy * alpha;
-    }
+    // MotionEngine already supplies the profile-specific stabilized position.
+    // The cursor only maps coordinates and renders; it must not add another filter.
+    this.x = mapped.x;
+    this.y = mapped.y;
 
     this.visible = true;
     this.element.classList.add('active');
