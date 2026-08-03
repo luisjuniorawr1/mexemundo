@@ -44,9 +44,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.8.0',
+      version: '0.8.1',
       games: ['balloons', 'goalkeeper'],
       interaction: 'calibrated-hand-cursor',
+      session: 'seamless-role-handoff',
       transport: 'webrtc-dual-channel-adaptive'
     }));
     return;
@@ -131,13 +132,37 @@ function removeFromRoom(client) {
 
 function addToRoom(client, room, role) {
   removeFromRoom(client);
-  client.room = room;
-  client.role = role;
 
   const members = rooms.get(room) ?? new Set();
+  const replaced = [];
+
+  for (const member of [...members]) {
+    if (member !== client && member.role === role) {
+      members.delete(member);
+      member.room = '';
+      member.role = '';
+      replaced.push(member);
+    }
+  }
+
+  client.room = room;
+  client.role = role;
   members.add(client);
   rooms.set(room, members);
   broadcastRoomStatus(room);
+
+  for (const member of replaced) {
+    sendJson(member, {
+      type: 'session-replaced',
+      payload: { room, role }
+    });
+
+    setTimeout(() => {
+      if (member.readyState === WebSocket.OPEN) {
+        member.close(4001, 'Sessão substituída por uma nova tela.');
+      }
+    }, 30);
+  }
 }
 
 function handleMessage(client, rawMessage) {
