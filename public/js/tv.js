@@ -20,26 +20,30 @@ const scoreValue = document.querySelector('#scoreValue');
 const timeValue = document.querySelector('#timeValue');
 const comboValue = document.querySelector('#comboValue');
 const canvas = document.querySelector('#gameCanvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const fpsValue = document.querySelector('#fpsValue');
 const networkValue = document.querySelector('#networkValue');
 const poseValue = document.querySelector('#poseValue');
 
 const GAME_SECONDS = 45;
-const POSE_TIMEOUT_MS = 380;
-const POINT_NAMES = ['left', 'right', 'leftElbow', 'rightElbow', 'leftShoulder', 'rightShoulder', 'nose'];
+const POSE_TIMEOUT_MS = 240;
+const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const WRIST_NAMES = new Set(['left', 'right']);
 const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '#fee440'];
 const BALLOON_SYMBOLS = ['★', '♥', '●', '✦', '♪'];
+const backgroundCanvas = document.createElement('canvas');
+const backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
 
 roomCode.textContent = room;
 await socket.connect();
 await socket.request('join', { room, role: 'tv' });
 
 let phoneConnected = false;
+let transportMode = 'relay';
+let transportRtt = 0;
 let state = 'pairing';
 let target = emptyPose();
-let smooth = emptyPose();
+let motion = emptyPose();
 let previousHands = { left: emptyPoint(0.35, 0.55), right: emptyPoint(0.65, 0.55) };
 let calibrationStartedAt = 0;
 let raisedHandsStartedAt = 0;
@@ -59,7 +63,6 @@ let audioContext = null;
 let posePackets = 0;
 let poseRate = 0;
 let poseRateWindow = performance.now();
-let roundTripMs = 0;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -74,11 +77,8 @@ function emptyPose() {
     detected: false,
     left: emptyPoint(0.35, 0.55),
     right: emptyPoint(0.65, 0.55),
-    leftElbow: emptyPoint(0.4, 0.48),
-    rightElbow: emptyPoint(0.6, 0.48),
     leftShoulder: emptyPoint(0.44, 0.35),
     rightShoulder: emptyPoint(0.56, 0.35),
-    nose: emptyPoint(0.5, 0.2),
     receivedAt: 0,
     sequence: 0,
     processingMs: 0,
@@ -107,13 +107,45 @@ function normalizePose(data) {
   return pose;
 }
 
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-  canvas.width = Math.round(canvas.clientWidth * dpr);
-  canvas.height = Math.round(canvas.clientHeight * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+function rebuildBackground(width, height) {
+  backgroundCanvas.width = Math.max(1, Math.round(width));
+  backgroundCanvas.height = Math.max(1, Math.round(height));
+  const gradient = backgroundCtx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, '#6a4cff');
+  gradient.addColorStop(0.55, '#7c5cff');
+  gradient.addColorStop(1, '#45c8ff');
+  backgroundCtx.fillStyle = gradient;
+  backgroundCtx.fillRect(0, 0, width, height);
+
+  backgroundCtx.fillStyle = 'rgba(255,255,255,.09)';
+  for (let i = 0; i < 12; i += 1) {
+    const x = (i * 137) % Math.max(1, width);
+    const y = (i * 91) % Math.max(1, height);
+    backgroundCtx.beginPath();
+    backgroundCtx.arc(x, y, 16 + (i % 4) * 7, 0, Math.PI * 2);
+    backgroundCtx.fill();
+  }
+
+  backgroundCtx.fillStyle = '#5dd39e';
+  backgroundCtx.beginPath();
+  backgroundCtx.moveTo(0, height * 0.88);
+  backgroundCtx.quadraticCurveTo(width * 0.25, height * 0.79, width * 0.5, height * 0.89);
+  backgroundCtx.quadraticCurveTo(width * 0.76, height * 0.98, width, height * 0.84);
+  backgroundCtx.lineTo(width, height);
+  backgroundCtx.lineTo(0, height);
+  backgroundCtx.closePath();
+  backgroundCtx.fill();
 }
-window.addEventListener('resize', resize);
+
+function resize() {
+  const width = Math.max(1, Math.round(canvas.clientWidth));
+  const height = Math.max(1, Math.round(canvas.clientHeight));
+  if (canvas.width === width && canvas.height === height) return;
+  canvas.width = width;
+  canvas.height = height;
+  rebuildBackground(width, height);
+}
+window.addEventListener('resize', resize, { passive: true });
 resize();
 
 function setState(next) {
@@ -133,7 +165,9 @@ function setState(next) {
 
 function updateConnection(status) {
   phoneConnected = Boolean(status.phone);
-  connectionBadge.textContent = phoneConnected ? 'Celular conectado' : 'Aguardando celular';
+  connectionBadge.textContent = phoneConnected
+    ? (transportMode === 'direct' ? 'SUPER TURBO direto' : 'Celular conectado')
+    : 'Aguardando celular';
   connectionBadge.className = `badge ${phoneConnected ? 'online' : 'waiting'}`;
 
   if (!phoneConnected) {
@@ -141,32 +175,36 @@ function updateConnection(status) {
     countdownTimer = null;
     setState('pairing');
     target = emptyPose();
-    smooth = emptyPose();
+    motion = emptyPose();
     return;
   }
-
   if (state === 'pairing') setState('calibrating');
 }
 
 socket.on('room-status', updateConnection);
 socket.on('disconnect', () => updateConnection({ phone: false }));
+socket.on('transport', ({ mode, rtt = 0 }) => {
+  transportMode = mode;
+  if (rtt) transportRtt = rtt;
+  if (phoneConnected) {
+    connectionBadge.textContent = mode === 'direct' ? 'SUPER TURBO direto' : 'Modo servidor';
+    connectionBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
+  }
+});
 socket.on('pose', (data) => {
   target = normalizePose(data);
   posePackets += 1;
-  poseValue.textContent = data.detected ? `detectada • ${poseRate}/s` : 'não detectada';
 });
 
 setInterval(async () => {
   try {
-    const sentAt = performance.now();
-    await socket.request('ping-latency', { sentAt: Date.now() }, 2500);
-    roundTripMs = Math.round(performance.now() - sentAt);
-    networkValue.textContent = `${roundTripMs} ms RTT • ${poseRate}/s`;
+    const startedAt = performance.now();
+    await socket.request('ping-latency', { sentAt: Date.now() }, 1800);
+    transportRtt = Math.round(performance.now() - startedAt);
   } catch {
-    connectionBadge.textContent = 'Servidor desconectado';
-    connectionBadge.className = 'badge waiting';
+    // O diagnóstico não deve interferir na partida.
   }
-}, 1000);
+}, 1500);
 
 document.querySelector('#fullscreenButton').addEventListener('click', async () => {
   try {
@@ -185,7 +223,7 @@ function bodyReady(now) {
 
 function handsRaised(pose) {
   if (!pose.left.visible || !pose.right.visible) return false;
-  const shoulderY = Math.min(pose.leftShoulder?.y ?? 0.4, pose.rightShoulder?.y ?? 0.4);
+  const shoulderY = Math.min(pose.leftShoulder.y, pose.rightShoulder.y);
   return pose.left.y < shoulderY && pose.right.y < shoulderY;
 }
 
@@ -204,9 +242,9 @@ function handleCalibration(now) {
   }
 
   if (!calibrationStartedAt) calibrationStartedAt = now;
-  const progress = Math.min(1, (now - calibrationStartedAt) / 1400);
+  const progress = Math.min(1, (now - calibrationStartedAt) / 1100);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
-  calibrationMessage.textContent = progress < 0.55 ? 'Ótimo, continue assim!' : 'Tudo certo!';
+  calibrationMessage.textContent = progress < 0.55 ? 'Ótimo, continue assim!' : 'Super Turbo pronto!';
   if (progress >= 1) startCountdown();
 }
 
@@ -224,13 +262,12 @@ function startCountdown() {
       playTone(440 + (3 - count) * 90, 0.08);
       return;
     }
-
     clearInterval(countdownTimer);
     countdownTimer = null;
     countdownValue.textContent = 'JÁ!';
-    playTone(760, 0.16);
-    setTimeout(beginGame, 450);
-  }, 720);
+    playTone(760, 0.14);
+    setTimeout(beginGame, 350);
+  }, 650);
 }
 
 function beginGame() {
@@ -249,7 +286,6 @@ function beginGame() {
 function endGame() {
   setState('result');
   finalScoreValue.textContent = String(score);
-
   if (score >= 180) {
     resultTitle.textContent = 'Você é um mestre dos balões!';
     resultMessage.textContent = 'Velocidade, atenção e mãos certeiras!';
@@ -277,7 +313,7 @@ function spawnBalloon(width, height, now) {
   const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));
   const special = Math.random() < 0.12;
   balloons.push({
-    id: crypto.randomUUID?.() ?? `${now}-${Math.random()}`,
+    id: `${now}-${Math.random()}`,
     x: randomBetween(radius * 1.6, width - radius * 1.6),
     y: height + radius * 1.5,
     radius: special ? radius * 1.15 : radius,
@@ -303,7 +339,7 @@ function distanceToSegmentSquared(px, py, ax, ay, bx, by) {
 
 function sweptHandHit(balloon, previous, current, width, height) {
   if (!current.visible) return false;
-  const handRadius = Math.max(26, Math.min(width, height) * 0.042);
+  const handRadius = Math.max(28, Math.min(width, height) * 0.044);
   const currentX = current.x * width;
   const currentY = current.y * height;
   const previousX = previous.visible ? previous.x * width : currentX;
@@ -326,20 +362,20 @@ function popBalloon(balloon) {
   combo = Math.min(5, 1 + Math.floor(consecutiveHits / 4));
   popTexts.push({ x: balloon.x, y: balloon.y, text: `+${points}`, life: 1 });
 
-  for (let i = 0; i < 16; i += 1) {
+  for (let i = 0; i < 8; i += 1) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = randomBetween(70, 210);
+    const speed = randomBetween(80, 180);
     particles.push({
       x: balloon.x,
       y: balloon.y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      size: randomBetween(3, 8),
+      size: randomBetween(3, 7),
       color: balloon.color,
       life: 1
     });
   }
-  playTone(balloon.special ? 820 : 620, balloon.special ? 0.16 : 0.08);
+  playTone(balloon.special ? 820 : 620, balloon.special ? 0.14 : 0.07);
 }
 
 function updateGame(now, dt, width, height) {
@@ -365,8 +401,8 @@ function updateGame(now, dt, width, height) {
   const poppedIds = new Set();
   for (const balloon of balloons) {
     if (
-      sweptHandHit(balloon, previousHands.left, smooth.left, width, height)
-      || sweptHandHit(balloon, previousHands.right, smooth.right, width, height)
+      sweptHandHit(balloon, previousHands.left, motion.left, width, height)
+      || sweptHandHit(balloon, previousHands.right, motion.right, width, height)
     ) {
       poppedIds.add(balloon.id);
       popBalloon(balloon);
@@ -382,7 +418,6 @@ function updateGame(now, dt, width, height) {
     }
     return true;
   });
-
   if (missed) {
     consecutiveHits = 0;
     combo = 1;
@@ -395,111 +430,78 @@ function updateEffects(dt) {
   for (const particle of particles) {
     particle.x += particle.vx * seconds;
     particle.y += particle.vy * seconds;
-    particle.vy += 260 * seconds;
-    particle.life -= seconds * 1.8;
+    particle.vy += 250 * seconds;
+    particle.life -= seconds * 2.2;
   }
   particles = particles.filter((particle) => particle.life > 0);
 
   for (const text of popTexts) {
-    text.y -= 50 * seconds;
-    text.life -= seconds * 1.4;
+    text.y -= 55 * seconds;
+    text.life -= seconds * 1.8;
   }
   popTexts = popTexts.filter((text) => text.life > 0);
 }
 
 function updateMotion(now, dt) {
   const fresh = now - target.receivedAt < POSE_TIMEOUT_MS;
-  const seconds = Math.max(1 / 120, dt / 1000);
-  previousHands = {
-    left: { ...smooth.left },
-    right: { ...smooth.right }
-  };
+  previousHands.left = { ...motion.left };
+  previousHands.right = { ...motion.right };
 
   for (const name of POINT_NAMES) {
     const source = target[name];
-    const current = smooth[name];
+    const current = motion[name];
     const visible = Boolean(fresh && target.detected && source.visible);
     current.visible = visible;
     if (!visible) continue;
 
+    const isWrist = WRIST_NAMES.has(name);
     const speed = Math.hypot(source.vx, source.vy);
-    const ageSeconds = Math.min((now - target.receivedAt) / 1000, 0.055);
-    const leadSeconds = WRIST_NAMES.has(name)
-      ? Math.min(0.065, 0.018 + ageSeconds)
-      : Math.min(0.04, 0.01 + ageSeconds * 0.55);
-
-    const desiredX = clamp(source.x + source.vx * leadSeconds * 0.72);
-    const desiredY = clamp(source.y + source.vy * leadSeconds * 0.72);
+    const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);
+    const lead = isWrist ? Math.min(0.032, 0.008 + packetAge) : 0;
+    const desiredX = clamp(source.x + source.vx * lead * 0.55);
+    const desiredY = clamp(source.y + source.vy * lead * 0.55);
     const distance = Math.hypot(desiredX - current.x, desiredY - current.y);
 
-    if (!smooth.detected || distance > 0.24) {
-      current.x = desiredX;
-      current.y = desiredY;
+    if (isWrist) {
+      if (!motion.detected || distance > 0.0015 || speed > 0.08) {
+        current.x = desiredX;
+        current.y = desiredY;
+      }
     } else {
-      const responsiveness = clamp(speed / (WRIST_NAMES.has(name) ? 1.8 : 1.2));
-      const slowTau = WRIST_NAMES.has(name) ? 0.062 : 0.085;
-      const fastTau = WRIST_NAMES.has(name) ? 0.014 : 0.028;
-      const tau = slowTau + (fastTau - slowTau) * responsiveness;
-      const alpha = 1 - Math.exp(-seconds / tau);
-      const deadZone = speed < 0.08 ? 0.0025 : 0;
-      const dx = Math.abs(desiredX - current.x) < deadZone ? 0 : desiredX - current.x;
-      const dy = Math.abs(desiredY - current.y) < deadZone ? 0 : desiredY - current.y;
-      current.x = clamp(current.x + dx * alpha);
-      current.y = clamp(current.y + dy * alpha);
+      const seconds = Math.max(1 / 120, dt / 1000);
+      const alpha = 1 - Math.exp(-seconds / 0.04);
+      current.x += (desiredX - current.x) * alpha;
+      current.y += (desiredY - current.y) * alpha;
     }
     current.vx = source.vx;
     current.vy = source.vy;
   }
-
-  smooth.detected = Boolean(fresh && target.detected);
+  motion.detected = Boolean(fresh && target.detected);
 }
 
 function handleRestartGesture(now) {
   if (state !== 'result') return;
-  if (!handsRaised(smooth)) {
+  if (!handsRaised(motion)) {
     raisedHandsStartedAt = 0;
     return;
   }
   if (!raisedHandsStartedAt) raisedHandsStartedAt = now;
-  if (now - raisedHandsStartedAt >= 1800) {
+  if (now - raisedHandsStartedAt >= 1500) {
     raisedHandsStartedAt = 0;
     startCountdown();
   }
 }
 
-function drawBackground(width, height, now) {
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, '#6a4cff');
-  gradient.addColorStop(0.55, '#7c5cff');
-  gradient.addColorStop(1, '#45c8ff');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.fillStyle = 'rgba(255,255,255,.10)';
-  for (let i = 0; i < 14; i += 1) {
-    const x = ((i * 127 + now * 0.012) % (width + 160)) - 80;
-    const y = (i * 89) % Math.max(1, height);
-    ctx.beginPath();
-    ctx.arc(x, y, 18 + (i % 4) * 8, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.fillStyle = '#5dd39e';
-  ctx.beginPath();
-  ctx.moveTo(0, height * 0.88);
-  ctx.quadraticCurveTo(width * 0.25, height * 0.79, width * 0.5, height * 0.89);
-  ctx.quadraticCurveTo(width * 0.76, height * 0.98, width, height * 0.84);
-  ctx.lineTo(width, height);
-  ctx.lineTo(0, height);
-  ctx.closePath();
-  ctx.fill();
+function drawBackground(width, height) {
+  ctx.drawImage(backgroundCanvas, 0, 0, width, height);
 }
 
 function drawBalloon(balloon, now) {
   ctx.save();
   ctx.translate(balloon.x, balloon.y);
   ctx.rotate(Math.sin(now / 450 + balloon.phase) * 0.08);
-  ctx.strokeStyle = 'rgba(35, 41, 72, .35)';
+
+  ctx.strokeStyle = 'rgba(35, 41, 72, .3)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(0, balloon.radius * 0.88);
@@ -511,17 +513,9 @@ function drawBalloon(balloon, now) {
   ctx.ellipse(0, 0, balloon.radius * 0.82, balloon.radius, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = 'rgba(255,255,255,.38)';
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
   ctx.beginPath();
   ctx.ellipse(-balloon.radius * 0.25, -balloon.radius * 0.3, balloon.radius * 0.15, balloon.radius * 0.25, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = balloon.color;
-  ctx.beginPath();
-  ctx.moveTo(-7, balloon.radius * 0.82);
-  ctx.lineTo(7, balloon.radius * 0.82);
-  ctx.lineTo(0, balloon.radius * 1.08);
-  ctx.closePath();
   ctx.fill();
 
   ctx.fillStyle = balloon.special ? '#704f00' : 'rgba(255,255,255,.92)';
@@ -536,24 +530,19 @@ function drawHand(hand, side, width, height) {
   if (!hand.visible) return;
   const x = hand.x * width;
   const y = hand.y * height;
-  const radius = Math.max(26, Math.min(width, height) * 0.042);
-  ctx.save();
-  ctx.shadowColor = 'rgba(37, 15, 112, .32)';
-  ctx.shadowBlur = 16;
+  const radius = Math.max(28, Math.min(width, height) * 0.044);
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fillStyle = side === 'left' ? '#ff5d8f' : '#2ec4b6';
   ctx.fill();
-  ctx.lineWidth = Math.max(4, radius * 0.16);
+  ctx.lineWidth = Math.max(4, radius * 0.15);
   ctx.strokeStyle = '#ffffff';
   ctx.stroke();
-  ctx.shadowBlur = 0;
-  ctx.font = `900 ${Math.round(radius * 0.95)}px system-ui`;
+  ctx.font = `900 ${Math.round(radius * 0.9)}px system-ui`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffffff';
   ctx.fillText('✋', x, y + 1);
-  ctx.restore();
 }
 
 function drawEffects() {
@@ -568,11 +557,11 @@ function drawEffects() {
 
   for (const text of popTexts) {
     ctx.globalAlpha = Math.max(0, text.life);
-    ctx.font = '900 30px system-ui';
+    ctx.font = '900 28px system-ui';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#5530b9';
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 5;
     ctx.strokeText(text.text, text.x, text.y);
     ctx.fillText(text.text, text.x, text.y);
   }
@@ -592,7 +581,7 @@ function playTone(frequency, duration = 0.08) {
     oscillator.type = 'sine';
     oscillator.frequency.value = frequency;
     gain.gain.setValueAtTime(0.001, audioContext.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.07, audioContext.currentTime + 0.008);
     gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
     oscillator.connect(gain).connect(audioContext.destination);
     oscillator.start();
@@ -604,7 +593,7 @@ function playTone(frequency, duration = 0.08) {
 
 function playCelebration() {
   [523, 659, 784, 1047].forEach((frequency, index) => {
-    setTimeout(() => playTone(frequency, 0.18), index * 120);
+    setTimeout(() => playTone(frequency, 0.16), index * 100);
   });
 }
 
@@ -612,14 +601,14 @@ window.addEventListener('pointerdown', ensureAudio, { once: true });
 window.addEventListener('keydown', ensureAudio, { once: true });
 
 function frame(now) {
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const dt = Math.min(50, now - lastFrame);
+  resize();
+  const width = canvas.width;
+  const height = canvas.height;
+  const dt = Math.min(40, now - lastFrame);
   lastFrame = now;
 
   updateMotion(now, dt);
-  drawBackground(width, height, now);
-
+  drawBackground(width, height);
   if (state === 'calibrating') handleCalibration(now);
   if (state === 'playing') updateGame(now, dt, width, height);
   handleRestartGesture(now);
@@ -627,10 +616,9 @@ function frame(now) {
 
   for (const balloon of balloons) drawBalloon(balloon, now);
   drawEffects();
-
   if (phoneConnected && state !== 'pairing') {
-    drawHand(smooth.left, 'left', width, height);
-    drawHand(smooth.right, 'right', width, height);
+    drawHand(motion.left, 'left', width, height);
+    drawHand(motion.right, 'right', width, height);
   }
 
   fpsAccumulator += dt;
@@ -645,8 +633,10 @@ function frame(now) {
     poseRate = posePackets;
     posePackets = 0;
     poseRateWindow = now;
-    poseValue.textContent = target.detected ? `detectada • ${poseRate}/s` : 'não detectada';
-    networkValue.textContent = `${roundTripMs || '--'} ms RTT • ${poseRate}/s`;
+    poseValue.textContent = target.detected
+      ? `detectada • ${poseRate}/s • IA ${target.processingMs} ms`
+      : 'não detectada';
+    networkValue.textContent = `${transportMode === 'direct' ? 'Direto' : 'Servidor'} • ${transportRtt || '--'} ms • ${poseRate}/s`;
   }
 
   requestAnimationFrame(frame);
