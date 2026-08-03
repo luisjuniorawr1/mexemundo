@@ -3,17 +3,79 @@ const RTC_CONFIG = {
   iceCandidatePoolSize: 1
 };
 
+const POSE_MAGIC = 0x4d;
+const POSE_VERSION = 1;
+const POSE_POINTS = ['left', 'right', 'leftShoulder', 'rightShoulder'];
+const POSE_PACKET_BYTES = 8 + POSE_POINTS.length * 8;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function encodePose(payload) {
+  const buffer = new ArrayBuffer(POSE_PACKET_BYTES);
+  const view = new DataView(buffer);
+  let flags = payload.detected ? 1 : 0;
+  POSE_POINTS.forEach((name, index) => {
+    if (payload[name]?.visible) flags |= 1 << (index + 1);
+  });
+
+  view.setUint8(0, POSE_MAGIC);
+  view.setUint8(1, POSE_VERSION);
+  view.setUint8(2, flags);
+  view.setUint8(3, 0);
+  view.setUint16(4, Number(payload.sequence || 0) & 0xffff, true);
+  view.setUint8(6, clamp(Math.round(payload.processingMs || 0), 0, 255));
+  view.setUint8(7, clamp(Math.round(payload.sourceIntervalMs || 0), 0, 255));
+
+  let offset = 8;
+  for (const name of POSE_POINTS) {
+    const point = payload[name] ?? {};
+    view.setUint16(offset, clamp(Math.round((point.x ?? 0.5) * 65535), 0, 65535), true);
+    view.setUint16(offset + 2, clamp(Math.round((point.y ?? 0.5) * 65535), 0, 65535), true);
+    view.setInt16(offset + 4, clamp(Math.round((point.vx ?? 0) * 8191), -32767, 32767), true);
+    view.setInt16(offset + 6, clamp(Math.round((point.vy ?? 0) * 8191), -32767, 32767), true);
+    offset += 8;
+  }
+  return buffer;
+}
+
+function decodePose(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== POSE_PACKET_BYTES) return null;
+  const view = new DataView(buffer);
+  if (view.getUint8(0) !== POSE_MAGIC || view.getUint8(1) !== POSE_VERSION) return null;
+
+  const flags = view.getUint8(2);
+  const payload = {
+    detected: Boolean(flags & 1),
+    sequence: view.getUint16(4, true),
+    processingMs: view.getUint8(6),
+    sourceIntervalMs: view.getUint8(7)
+  };
+
+  let offset = 8;
+  POSE_POINTS.forEach((name, index) => {
+    payload[name] = {
+      x: view.getUint16(offset, true) / 65535,
+      y: view.getUint16(offset + 2, true) / 65535,
+      vx: view.getInt16(offset + 4, true) / 8191,
+      vy: view.getInt16(offset + 6, true) / 8191,
+      visible: Boolean(flags & (1 << (index + 1)))
+    };
+    offset += 8;
+  });
+  return payload;
+}
+
 export class RealtimeClient {
   constructor() {
     this.socket = null;
     this.handlers = new Map();
     this.pending = new Map();
     this.sequence = 0;
-
     this.room = '';
     this.role = '';
     this.roomStatus = { tv: false, phone: false };
-
     this.peer = null;
     this.channel = null;
     this.pendingCandidates = [];
@@ -25,7 +87,6 @@ export class RealtimeClient {
 
   async connect() {
     if (this.socket?.readyState === WebSocket.OPEN) return;
-
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.socket = new WebSocket(`${protocol}//${location.host}/ws`);
 
@@ -63,7 +124,6 @@ export class RealtimeClient {
           this.startDirectConnection().catch(() => this.fallbackToRelay());
         }
       }
-
       this.handleIncoming(message);
     });
 
@@ -102,11 +162,9 @@ export class RealtimeClient {
 
   emit(type, payload = {}) {
     if (type === 'pose' && this.channel?.readyState === 'open') {
-      // Pacotes de movimento antigos não têm valor. Em congestionamento,
-      // descarta o quadro atual em vez de criar uma fila perceptível.
-      if (this.channel.bufferedAmount > 16 * 1024) return true;
+      if (this.channel.bufferedAmount > 128) return true;
       try {
-        this.channel.send(JSON.stringify({ type, payload }));
+        this.channel.send(encodePose(payload));
         return true;
       } catch {
         this.fallbackToRelay();
@@ -121,16 +179,13 @@ export class RealtimeClient {
   async request(type, payload = {}, timeoutMs = 5000) {
     if (type === 'ping-latency' && this.channel?.readyState === 'open') {
       try {
-        return await this.directRequest(type, payload, Math.min(timeoutMs, 900));
+        return await this.directRequest(type, payload, Math.min(timeoutMs, 700));
       } catch {
-        // O canal de poses é propositalmente não confiável. Se um ping cair,
-        // mede pelo WebSocket sem derrubar a partida nem acusar desconexão.
+        // O canal direto é não confiável de propósito; mede pelo servidor quando o ping cair.
       }
     }
 
-    if (this.socket?.readyState !== WebSocket.OPEN) {
-      throw new Error('Servidor desconectado.');
-    }
+    if (this.socket?.readyState !== WebSocket.OPEN) throw new Error('Servidor desconectado.');
 
     if (type === 'join') {
       this.room = String(payload.room ?? '').toUpperCase();
@@ -143,7 +198,6 @@ export class RealtimeClient {
         this.pending.delete(id);
         reject(new Error('O servidor não respondeu.'));
       }, timeoutMs);
-
       this.pending.set(id, { resolve, reject, timeout });
       this.socket.send(JSON.stringify({ type, payload, id }));
     }).then((response) => {
@@ -167,13 +221,11 @@ export class RealtimeClient {
   directRequest(requestType, payload, timeoutMs) {
     const id = `d-${Date.now().toString(36)}-${(++this.sequence).toString(36)}`;
     const startedAt = performance.now();
-
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('Canal direto não respondeu.'));
       }, timeoutMs);
-
       this.pending.set(id, {
         timeout,
         reject,
@@ -183,7 +235,6 @@ export class RealtimeClient {
           resolve(response);
         }
       });
-
       try {
         this.channel.send(JSON.stringify({ type: 'direct-request', requestType, payload, id }));
       } catch (error) {
@@ -201,7 +252,6 @@ export class RealtimeClient {
 
   createPeer() {
     this.closePeer(false);
-
     const peer = new RTCPeerConnection(RTC_CONFIG);
     this.peer = peer;
     this.pendingCandidates = [];
@@ -209,44 +259,40 @@ export class RealtimeClient {
     peer.addEventListener('icecandidate', ({ candidate }) => {
       if (candidate) this.sendSignal({ candidate });
     });
-
-    peer.addEventListener('datachannel', ({ channel }) => {
-      this.attachChannel(channel);
-    });
-
+    peer.addEventListener('datachannel', ({ channel }) => this.attachChannel(channel));
     peer.addEventListener('connectionstatechange', () => {
       const state = peer.connectionState;
       if (state === 'failed' || state === 'closed') {
         this.fallbackToRelay();
         this.scheduleRetry();
       } else if (state === 'disconnected') {
-        this.scheduleRetry(1200);
+        this.scheduleRetry(900);
       }
     });
-
     return peer;
   }
 
   attachChannel(channel) {
     this.channel = channel;
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 4 * 1024;
+    channel.bufferedAmountLowThreshold = 64;
 
     channel.addEventListener('open', () => {
       this.transportMode = 'direct';
       this.dispatch('transport', { mode: 'direct', rtt: this.directRtt });
     });
-
     channel.addEventListener('close', () => {
       this.fallbackToRelay();
       this.scheduleRetry();
     });
-
-    channel.addEventListener('error', () => {
-      this.fallbackToRelay();
-    });
-
+    channel.addEventListener('error', () => this.fallbackToRelay());
     channel.addEventListener('message', (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        const pose = decodePose(event.data);
+        if (pose) this.dispatch('pose', pose);
+        return;
+      }
+
       let message;
       try {
         message = JSON.parse(event.data);
@@ -264,12 +310,6 @@ export class RealtimeClient {
         }
         return;
       }
-
-      if (message.type === 'direct-response') {
-        this.handleIncoming(message);
-        return;
-      }
-
       this.handleIncoming(message);
     });
   }
@@ -277,7 +317,6 @@ export class RealtimeClient {
   async startDirectConnection() {
     if (this.role !== 'tv' || !this.roomStatus.phone) return;
     if (this.channel?.readyState === 'open' || this.peerStarting) return;
-
     this.peerStarting = true;
     try {
       const peer = this.createPeer();
@@ -286,7 +325,6 @@ export class RealtimeClient {
         maxRetransmits: 0
       });
       this.attachChannel(channel);
-
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       this.sendSignal({ description: peer.localDescription });
@@ -297,22 +335,18 @@ export class RealtimeClient {
 
   async handleSignal(signal) {
     if (!this.room || !signal) return;
-
     if (signal.description) {
       const description = signal.description;
       let peer = this.peer;
-
       if (description.type === 'offer') {
         peer = this.createPeer();
         await peer.setRemoteDescription(description);
         await this.flushCandidates();
-
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         this.sendSignal({ description: peer.localDescription });
         return;
       }
-
       if (description.type === 'answer' && peer) {
         await peer.setRemoteDescription(description);
         await this.flushCandidates();
@@ -321,11 +355,8 @@ export class RealtimeClient {
     }
 
     if (signal.candidate) {
-      if (this.peer?.remoteDescription) {
-        await this.peer.addIceCandidate(signal.candidate);
-      } else {
-        this.pendingCandidates.push(signal.candidate);
-      }
+      if (this.peer?.remoteDescription) await this.peer.addIceCandidate(signal.candidate);
+      else this.pendingCandidates.push(signal.candidate);
     }
   }
 
@@ -348,7 +379,7 @@ export class RealtimeClient {
     }
   }
 
-  scheduleRetry(delay = 1800) {
+  scheduleRetry(delay = 1400) {
     if (this.role !== 'tv' || !this.roomStatus.phone || this.retryTimer) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -359,19 +390,12 @@ export class RealtimeClient {
   closePeer(resetTransport = true) {
     clearTimeout(this.retryTimer);
     this.retryTimer = null;
-
-    try {
-      this.channel?.close();
-    } catch {}
-    try {
-      this.peer?.close();
-    } catch {}
-
+    try { this.channel?.close(); } catch {}
+    try { this.peer?.close(); } catch {}
     this.channel = null;
     this.peer = null;
     this.pendingCandidates = [];
     this.peerStarting = false;
-
     if (resetTransport) this.fallbackToRelay();
   }
 }
