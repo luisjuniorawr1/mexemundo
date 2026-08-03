@@ -1,9 +1,10 @@
-import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm';
 import { HandTrackingCore } from './hand-tracking-core.js';
 
-const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm';
+const TASKS_VERSION = '0.10.35';
+const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/+esm`;
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/wasm`;
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-const PROFILE_KEY = 'mexemundo-hand-calibration-v1';
+const PROFILE_KEY = 'mexemundo-hand-calibration-v2';
 const TARGET_RADIUS = 0.13;
 const ALIGN_HOLD_MS = 1800;
 
@@ -54,7 +55,6 @@ const PHASES = [
   { id: 'corners', title: 'Alcance os cantos', text: 'Siga os círculos até completar a volta.', duration: 6000 }
 ];
 
-let handTask;
 let running = false;
 let lastMediaTime = -1;
 let latestSnapshot = null;
@@ -65,6 +65,16 @@ let counters = resetCounters();
 let rateStartedAt = performance.now();
 let measuredRate = 0;
 let measuredInferenceMs = 0;
+let inferenceEwmaMs = 0;
+let targetInferenceHz = 24;
+let lastSubmittedAt = 0;
+let frameId = 0;
+let detectorBusy = false;
+let capturePending = false;
+let detectorMode = 'worker';
+let detectorDelegate = '—';
+let detectorWorker = null;
+let fallbackTask = null;
 
 const session = {
   active: false,
@@ -106,7 +116,7 @@ function rms(points) {
 }
 
 function resetCounters() {
-  return { camera: 0, hand: 0, handMs: 0 };
+  return { camera: 0, hand: 0, handMs: 0, dropped: 0 };
 }
 
 function createSampleStore() {
@@ -124,7 +134,7 @@ function loadProfile() {
     const raw = localStorage.getItem(PROFILE_KEY);
     if (!raw) return null;
     const profile = JSON.parse(raw);
-    return profile?.version === 1 ? profile : null;
+    return profile?.version === 2 ? profile : null;
   } catch {
     return null;
   }
@@ -136,25 +146,24 @@ function saveProfile(profile) {
 }
 
 function applyLoadedProfile() {
-  if (!loadedProfile) return;
-  core.applyCalibration?.(loadedProfile);
+  if (loadedProfile) core.applyCalibration(loadedProfile);
 }
 
 function refreshProfileUi() {
   if (!loadedProfile) {
     profileBadge.textContent = 'Sem perfil';
-    activeProfile.textContent = 'Padrão';
+    activeProfile.textContent = `Padrão • ${detectorMode}`;
     profileDate.textContent = 'ainda não calibrado';
     return;
   }
   profileBadge.textContent = `Perfil ${loadedProfile.score}/100`;
-  activeProfile.textContent = loadedProfile.tier;
+  activeProfile.textContent = `${loadedProfile.tier} • ${detectorMode}`;
   profileDate.textContent = new Date(loadedProfile.createdAt).toLocaleDateString('pt-BR');
 }
 
 function orderedVisibleHands() {
   const hands = latestSnapshot?.hands?.filter((hand) => hand.visible && hand.visual) ?? [];
-  return hands.sort((a, b) => a.visual.x - b.visual.x).slice(0, 2);
+  return [...hands].sort((a, b) => a.visual.x - b.visual.x).slice(0, 2);
 }
 
 function phaseTargets(phase, elapsed) {
@@ -265,7 +274,7 @@ function recordSamples(phase, hands, targets) {
 
 function updateCalibration(now) {
   if (!session.active) return;
-  const dt = session.lastUpdateAt ? clamp(now - session.lastUpdateAt, 0, 80) : 16;
+  const dt = session.lastUpdateAt ? clamp(now - session.lastUpdateAt, 0, 120) : 16;
   session.lastUpdateAt = now;
   const phase = PHASES[session.phaseIndex];
   const hands = orderedVisibleHands();
@@ -274,7 +283,9 @@ function updateCalibration(now) {
   if (pairVisible) session.visibleFrames += 1;
 
   const targets = phaseTargets(phase, session.phaseElapsed);
-  const hits = pairVisible ? hands.map((hand, index) => distance(hand.visual, targets[index]) <= TARGET_RADIUS) : [false, false];
+  const hits = pairVisible
+    ? hands.map((hand, index) => distance(hand.visual, targets[index]) <= TARGET_RADIUS)
+    : [false, false];
   setTargets(targets, hits);
 
   if (!pairVisible) {
@@ -306,11 +317,8 @@ function updateCalibration(now) {
   updateProgress(progress);
 
   if (progress < 1) return;
-  if (session.phaseIndex < PHASES.length - 1) {
-    setPhase(session.phaseIndex + 1);
-  } else {
-    finishCalibration();
-  }
+  if (session.phaseIndex < PHASES.length - 1) setPhase(session.phaseIndex + 1);
+  else finishCalibration();
 }
 
 function updateProgress(phaseProgress) {
@@ -325,7 +333,7 @@ function makeHandProfile(index) {
   const scale = median(session.samples.scale[index]);
   const movementError = mean(session.samples.movementError[index]);
   const crossAxisError = mean(session.samples.crossAxisError[index]);
-  const restRadius = clamp(Math.max(visualJitter * 3.2, scale * 0.011), 0.0012, 0.018);
+  const restRadius = clamp(Math.max(rawJitter * 2.4, scale * 0.009), 0.0010, 0.016);
   const relativeNoise = scale ? rawJitter / scale : 0.02;
   return {
     rawJitter,
@@ -334,8 +342,9 @@ function makeHandProfile(index) {
     movementError,
     crossAxisError,
     restRadius,
-    minCutoff: clamp(1.55 - relativeNoise * 5.5, 0.85, 1.55),
-    beta: clamp(0.14 + movementError * 0.9, 0.14, 0.28)
+    minCutoff: clamp(1.45 - relativeNoise * 4.8, 0.80, 1.45),
+    beta: clamp(0.16 + movementError * 0.9, 0.16, 0.32),
+    derivativeCutoff: 1.0
   };
 }
 
@@ -359,7 +368,7 @@ function finishCalibration() {
   );
   const tier = score >= 82 ? 'Excelente' : score >= 68 ? 'Boa' : score >= 52 ? 'Utilizável' : 'Precisa de ajustes';
   const profile = {
-    version: 1,
+    version: 2,
     createdAt: Date.now(),
     score,
     tier,
@@ -367,6 +376,9 @@ function finishCalibration() {
     device: {
       fps: measuredRate,
       inferenceMs: measuredInferenceMs,
+      targetHz: targetInferenceHz,
+      detectorMode,
+      delegate: detectorDelegate,
       width: video.videoWidth,
       height: video.videoHeight
     },
@@ -377,7 +389,7 @@ function finishCalibration() {
     }
   };
   saveProfile(profile);
-  core.applyCalibration?.(profile);
+  core.applyCalibration(profile);
   showResult(profile);
   stopCalibration('Calibração concluída e salva neste aparelho.');
 }
@@ -391,15 +403,15 @@ function showResult(profile) {
   continuityResult.textContent = `${Math.round(profile.metrics.continuity * 100)}%`;
   performanceResult.textContent = `${profile.device.fps.toFixed(1)}/s`;
   resultMessage.textContent = profile.score >= 68
-    ? 'O perfil foi aplicado ao núcleo deste aparelho. Você pode repetir para comparar outra posição ou iluminação.'
-    : 'O perfil foi salvo, mas a iluminação, distância ou desempenho ainda limitaram a precisão. Repita com o celular apoiado e mais luz.';
-  resultCode.textContent = `MX1-${profile.score}-${Math.round(profile.device.fps)}-${Math.round(profile.metrics.jitterPx * 10)}-${Math.round(profile.metrics.errorPx)}`;
+    ? 'O perfil foi aplicado ao núcleo de duas mãos neste aparelho.'
+    : 'O perfil foi salvo, mas a iluminação, distância ou desempenho ainda limitaram a precisão.';
+  resultCode.textContent = `MX2-${profile.score}-${Math.round(profile.device.fps)}-${Math.round(profile.metrics.jitterPx * 10)}-${Math.round(profile.metrics.errorPx)}`;
   refreshProfileUi();
 }
 
 function canvasTransform() {
-  const sourceWidth = Math.max(1, video.videoWidth || 640);
-  const sourceHeight = Math.max(1, video.videoHeight || 480);
+  const sourceWidth = Math.max(1, video.videoWidth || 480);
+  const sourceHeight = Math.max(1, video.videoHeight || 640);
   const scale = Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight);
   const width = sourceWidth * scale;
   const height = sourceHeight * scale;
@@ -444,23 +456,107 @@ function drawSnapshot() {
   }
 }
 
-async function createHandTask() {
-  statusText.textContent = 'Carregando rastreamento…';
-  statusDetail.textContent = 'A primeira abertura pode levar alguns segundos.';
-  const vision = await FilesetResolver.forVisionTasks(WASM);
+function adaptTargetRate(inferenceMs) {
+  inferenceEwmaMs = inferenceEwmaMs
+    ? inferenceEwmaMs * 0.82 + inferenceMs * 0.18
+    : inferenceMs;
+  if (inferenceEwmaMs <= 18) targetInferenceHz = 30;
+  else if (inferenceEwmaMs <= 30) targetInferenceHz = 24;
+  else if (inferenceEwmaMs <= 48) targetInferenceHz = 18;
+  else targetInferenceHz = 12;
+}
+
+function handleDetectionResult(result, timestampMs, inferenceMs) {
+  detectorBusy = false;
+  counters.hand += 1;
+  counters.handMs += inferenceMs;
+  adaptTargetRate(inferenceMs);
+  latestSnapshot = core.ingest(result, timestampMs);
+  const visibleCount = latestSnapshot.hands.filter((hand) => hand.visible).length;
+  visibleHands.textContent = `${visibleCount}/2`;
+  drawSnapshot();
+  updateCalibration(timestampMs);
+}
+
+async function createFallbackTask() {
+  const { FilesetResolver, HandLandmarker } = await import(TASKS_MODULE);
+  const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   const create = (delegate) => HandLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: HAND_MODEL, delegate },
     runningMode: 'VIDEO',
     numHands: 2,
-    minHandDetectionConfidence: 0.48,
-    minHandPresenceConfidence: 0.48,
-    minTrackingConfidence: 0.58
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5
   });
   try {
+    detectorDelegate = 'GPU';
     return await create('GPU');
   } catch (error) {
-    console.warn('GPU indisponível; usando CPU.', error);
+    console.warn('GPU indisponível no modo compatível; usando CPU.', error);
+    detectorDelegate = 'CPU';
     return create('CPU');
+  }
+}
+
+async function initializeWorkerDetector() {
+  if (!('Worker' in window) || !('createImageBitmap' in window)) {
+    throw new Error('Worker de vídeo indisponível neste navegador.');
+  }
+
+  detectorWorker = new Worker('/js/hand-landmarker-worker.js', { type: 'module' });
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('O detector em segundo plano demorou demais para iniciar.')), 15000);
+
+    detectorWorker.addEventListener('message', function onInitialMessage(event) {
+      const message = event.data ?? {};
+      if (message.type === 'ready') {
+        clearTimeout(timeout);
+        detectorDelegate = message.delegate ?? 'GPU';
+        detectorWorker.removeEventListener('message', onInitialMessage);
+        resolve();
+      } else if (message.type === 'fatal') {
+        clearTimeout(timeout);
+        detectorWorker.removeEventListener('message', onInitialMessage);
+        reject(new Error(message.message || 'Falha no detector em segundo plano.'));
+      }
+    });
+
+    detectorWorker.addEventListener('error', (event) => {
+      clearTimeout(timeout);
+      reject(new Error(event.message || 'Falha ao carregar o worker.'));
+    }, { once: true });
+
+    detectorWorker.postMessage({ type: 'init' });
+  });
+
+  detectorWorker.addEventListener('message', (event) => {
+    const message = event.data ?? {};
+    if (message.type === 'result') {
+      handleDetectionResult(message.result, message.timestampMs, Number(message.inferenceMs || 0));
+    } else if (message.type === 'frame-error') {
+      detectorBusy = false;
+      counters.dropped += 1;
+      console.warn('Quadro descartado pelo detector.', message.message);
+    }
+  });
+}
+
+async function initializeDetector() {
+  statusText.textContent = 'Carregando rastreamento…';
+  statusDetail.textContent = 'Preparando o núcleo de duas mãos.';
+
+  try {
+    await initializeWorkerDetector();
+    detectorMode = 'worker';
+    statusDetail.textContent = `MediaPipe ${TASKS_VERSION} em segundo plano • ${detectorDelegate}`;
+  } catch (workerError) {
+    console.warn('Worker indisponível; usando modo compatível.', workerError);
+    detectorWorker?.terminate?.();
+    detectorWorker = null;
+    detectorMode = 'compatível';
+    fallbackTask = await createFallbackTask();
+    statusDetail.textContent = `MediaPipe ${TASKS_VERSION} na interface • ${detectorDelegate}`;
   }
 }
 
@@ -472,9 +568,11 @@ async function openCamera() {
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 640 },
-      height: { ideal: 480 },
-      frameRate: { ideal: 60, max: 60 }
+      width: { ideal: 480 },
+      height: { ideal: 640 },
+      aspectRatio: { ideal: 3 / 4 },
+      frameRate: { ideal: 60, max: 60 },
+      resizeMode: 'crop-and-scale'
     }
   });
   video.srcObject = stream;
@@ -492,27 +590,67 @@ function updateRates(now) {
   measuredInferenceMs = counters.hand ? counters.handMs / counters.hand : 0;
   cameraRate.textContent = `${Math.round(counters.camera / seconds)} fps`;
   handRate.textContent = `${measuredRate.toFixed(1)}/s`;
-  handTime.textContent = measuredInferenceMs ? `${measuredInferenceMs.toFixed(1)} ms` : '— ms';
+  handTime.textContent = measuredInferenceMs
+    ? `${measuredInferenceMs.toFixed(1)} ms • alvo ${targetInferenceHz}/s`
+    : '— ms';
   counters = resetCounters();
   rateStartedAt = now;
 }
 
-function processFrame(now, metadata) {
+async function submitWorkerFrame(now) {
+  if (!detectorWorker || detectorBusy || capturePending) return;
+  capturePending = true;
+  try {
+    const bitmap = await createImageBitmap(video);
+    if (!running || detectorBusy) {
+      bitmap.close?.();
+      return;
+    }
+    detectorBusy = true;
+    lastSubmittedAt = now;
+    frameId += 1;
+    detectorWorker.postMessage({
+      type: 'frame',
+      frameId,
+      timestampMs: Math.round(now),
+      bitmap
+    }, [bitmap]);
+  } catch (error) {
+    counters.dropped += 1;
+    console.warn('Não foi possível preparar o quadro.', error);
+  } finally {
+    capturePending = false;
+  }
+}
+
+function submitFallbackFrame(now) {
+  if (!fallbackTask || detectorBusy) return;
+  detectorBusy = true;
+  lastSubmittedAt = now;
+  const startedAt = performance.now();
+  try {
+    const result = fallbackTask.detectForVideo(video, Math.round(now));
+    handleDetectionResult(result, now, performance.now() - startedAt);
+  } catch (error) {
+    detectorBusy = false;
+    counters.dropped += 1;
+    console.warn('Falha ao processar o quadro no modo compatível.', error);
+  }
+}
+
+function processVideoFrame(now, metadata) {
   if (!running) return;
   const mediaTime = metadata?.mediaTime ?? video.currentTime;
   if (mediaTime !== lastMediaTime && video.readyState >= 2) {
     lastMediaTime = mediaTime;
     counters.camera += 1;
-    const startedAt = performance.now();
-    const result = handTask.detectForVideo(video, Math.round(now));
-    const processingMs = performance.now() - startedAt;
-    counters.hand += 1;
-    counters.handMs += processingMs;
-    latestSnapshot = core.ingest(result, now);
-    const visibleCount = latestSnapshot.hands.filter((hand) => hand.visible).length;
-    visibleHands.textContent = `${visibleCount}/2`;
-    drawSnapshot();
-    updateCalibration(now);
+    const minimumInterval = 1000 / targetInferenceHz;
+    if (now - lastSubmittedAt >= minimumInterval) {
+      if (detectorMode === 'worker') void submitWorkerFrame(now);
+      else submitFallbackFrame(now);
+    } else {
+      counters.dropped += 1;
+    }
     updateRates(now);
   }
   schedule();
@@ -521,9 +659,9 @@ function processFrame(now, metadata) {
 function schedule() {
   if (!running) return;
   if (typeof video.requestVideoFrameCallback === 'function') {
-    video.requestVideoFrameCallback(processFrame);
+    video.requestVideoFrameCallback(processVideoFrame);
   } else {
-    requestAnimationFrame((now) => processFrame(now, { mediaTime: video.currentTime }));
+    requestAnimationFrame((now) => processVideoFrame(now, { mediaTime: video.currentTime }));
   }
 }
 
@@ -539,15 +677,15 @@ startButton.addEventListener('click', async () => {
   startButton.disabled = true;
   startButton.textContent = 'Carregando…';
   try {
-    handTask = await createHandTask();
+    await initializeDetector();
     await openCamera();
     applyLoadedProfile();
     running = true;
     startPanel.classList.add('hidden');
     statusText.textContent = 'Rastreamento ativo';
-    statusDetail.textContent = 'Posicione as duas mãos para iniciar a calibração.';
     calibrationInstruction.textContent = 'Toque em “Começar calibração” e siga os círculos.';
     calibrateButton.disabled = false;
+    refreshProfileUi();
     schedule();
   } catch (error) {
     console.error(error);
@@ -569,11 +707,14 @@ copyButton.addEventListener('click', async () => {
     copyButton.textContent = 'Selecione o código acima';
   }
 });
+
 window.addEventListener('resize', resizeCanvas, { passive: true });
 window.addEventListener('pagehide', () => {
   running = false;
   for (const track of video.srcObject?.getTracks?.() ?? []) track.stop();
-  handTask?.close?.();
+  detectorWorker?.postMessage?.({ type: 'close' });
+  detectorWorker?.terminate?.();
+  fallbackTask?.close?.();
 });
 
 refreshProfileUi();
