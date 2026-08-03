@@ -44,9 +44,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.9.1',
+      version: '0.9.2',
       games: ['balloons', 'goalkeeper'],
-      laboratory: 'guided-hand-calibration',
+      laboratory: 'two-hand-worker-calibration',
+      tracking: 'mediapipe-hand-landmarker-0.10.35',
       interaction: 'dual-hand-calibrated-cursor',
       session: 'seamless-role-handoff',
       transport: 'webrtc-dual-channel-adaptive'
