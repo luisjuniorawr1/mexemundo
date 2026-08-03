@@ -44,7 +44,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.8.1',
+      version: '0.8.2',
       games: ['balloons', 'goalkeeper'],
       interaction: 'calibrated-hand-cursor',
       session: 'seamless-role-handoff',
@@ -113,6 +113,11 @@ function broadcast(room, message, except = null) {
 function broadcastRoomStatus(room) {
   if (!room) return;
   broadcast(room, { type: 'room-status', payload: roomStatus(room) });
+}
+
+function sendRoomStatus(client, room) {
+  if (!room || client.room !== room) return;
+  sendJson(client, { type: 'room-status', payload: roomStatus(room) });
 }
 
 function removeFromRoom(client) {
@@ -194,6 +199,11 @@ function handleMessage(client, rawMessage) {
       replyTo: id,
       payload: { ok: true, room, status: roomStatus(room) }
     });
+
+    // Algumas telas antigas só instalam o listener de room-status depois que o
+    // pedido de join resolve. Reenvia o estado quando a página já terminou de
+    // inicializar, sem exigir que o celular digite o código novamente.
+    setTimeout(() => sendRoomStatus(client, room), 120);
     return;
   }
 
