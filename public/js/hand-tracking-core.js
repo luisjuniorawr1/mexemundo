@@ -53,6 +53,12 @@ class OneEuroAxis {
     this.lastRaw = null;
   }
 
+  configure({ minCutoff, beta, derivativeCutoff } = {}) {
+    if (Number.isFinite(minCutoff)) this.minCutoff = clamp(minCutoff, 0.55, 4);
+    if (Number.isFinite(beta)) this.beta = clamp(beta, 0, 1);
+    if (Number.isFinite(derivativeCutoff)) this.derivativeCutoff = clamp(derivativeCutoff, 0.2, 8);
+  }
+
   reset() {
     this.valueFilter.reset();
     this.derivativeFilter.reset();
@@ -145,7 +151,19 @@ class AdaptiveHandTrack {
     this.id = id;
     this.xFilter = new OneEuroAxis();
     this.yFilter = new OneEuroAxis();
+    this.calibration = null;
     this.reset();
+  }
+
+  applyCalibration(profile) {
+    this.calibration = profile && typeof profile === 'object' ? profile : null;
+    const settings = {
+      minCutoff: this.calibration?.minCutoff ?? 1.25,
+      beta: this.calibration?.beta ?? 0.12,
+      derivativeCutoff: this.calibration?.derivativeCutoff ?? 1.0
+    };
+    this.xFilter.configure(settings);
+    this.yFilter.configure(settings);
   }
 
   reset() {
@@ -227,10 +245,11 @@ class AdaptiveHandTrack {
       this.visual = { ...filtered };
       this.ready = true;
     } else {
+      const calibratedRestRadius = Number(this.calibration?.restRadius ?? 0);
       const restRadius = clamp(
-        Math.max(this.noise * 2.8, this.scale * 0.012),
+        Math.max(this.noise * 2.8, this.scale * 0.012, calibratedRestRadius),
         0.0012,
-        0.012
+        0.018
       );
       const visualDistance = distance(this.visual, filtered);
       const resting = speed < restingSpeed && visualDistance < restRadius;
@@ -289,10 +308,18 @@ function assignDetections(tracks, detections) {
 }
 
 export class HandTrackingCore {
-  constructor({ mirrorX = true } = {}) {
+  constructor({ mirrorX = true, calibration = null } = {}) {
     this.mirrorX = mirrorX;
     this.tracks = [new AdaptiveHandTrack('hand-a'), new AdaptiveHandTrack('hand-b')];
     this.lastTimestampMs = 0;
+    this.calibration = null;
+    if (calibration) this.applyCalibration(calibration);
+  }
+
+  applyCalibration(profile) {
+    this.calibration = profile && typeof profile === 'object' ? profile : null;
+    const handProfiles = Array.isArray(this.calibration?.hands) ? this.calibration.hands : [];
+    this.tracks.forEach((track, index) => track.applyCalibration(handProfiles[index] ?? null));
   }
 
   reset() {
