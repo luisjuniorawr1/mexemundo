@@ -57,7 +57,7 @@ function compact(value) {
   return Math.round(value * 10000) / 10000;
 }
 
-class SuperTurboPointFilter {
+class StableTurboPointFilter {
   constructor({ wrist = false } = {}) {
     this.wrist = wrist;
     this.ready = false;
@@ -87,10 +87,10 @@ class SuperTurboPointFilter {
       return this.output();
     }
 
-    const dt = clamp((now - this.time) / 1000, 1 / 120, 0.08);
+    const dt = clamp((now - this.time) / 1000, 1 / 120, 0.09);
     const rawVx = (rawX - this.rawX) / dt;
     const rawVy = (rawY - this.rawY) / dt;
-    const velocityBlend = this.wrist ? 0.72 : 0.45;
+    const velocityBlend = this.wrist ? 0.38 : 0.24;
     this.vx += (rawVx - this.vx) * velocityBlend;
     this.vy += (rawVy - this.vy) * velocityBlend;
 
@@ -98,13 +98,37 @@ class SuperTurboPointFilter {
     const dy = rawY - this.y;
     const distance = Math.hypot(dx, dy);
     const speed = Math.hypot(this.vx, this.vy);
-    const deadZone = this.wrist && speed < 0.09 ? 0.0014 : 0.0007;
+
+    let deadZone;
+    let alpha;
+
+    if (this.wrist) {
+      const movement = clamp((speed - 0.07) / 0.95);
+      const displacement = clamp(distance / 0.045);
+      const responsiveness = Math.max(movement, displacement);
+
+      deadZone = speed < 0.12 ? 0.0032 : speed < 0.35 ? 0.0016 : 0.0007;
+      alpha = 0.18 + responsiveness * 0.76;
+
+      if (distance > 0.075 || speed > 1.35) alpha = 1;
+    } else {
+      deadZone = 0.0016;
+      alpha = clamp(0.20 + distance * 5, 0.20, 0.72);
+    }
 
     if (distance > deadZone) {
-      const baseAlpha = this.wrist ? 0.84 : 0.48;
-      const alpha = clamp(baseAlpha + distance * (this.wrist ? 6.5 : 2.5), baseAlpha, 1);
+      const previousX = this.x;
+      const previousY = this.y;
       this.x += dx * alpha;
       this.y += dy * alpha;
+
+      const filteredVx = (this.x - previousX) / dt;
+      const filteredVy = (this.y - previousY) / dt;
+      this.vx += (filteredVx - this.vx) * 0.35;
+      this.vy += (filteredVy - this.vy) * 0.35;
+    } else {
+      this.vx *= 0.72;
+      this.vy *= 0.72;
     }
 
     this.rawX = rawX;
@@ -124,7 +148,7 @@ class SuperTurboPointFilter {
 }
 
 function getFilter(name) {
-  if (!filters.has(name)) filters.set(name, new SuperTurboPointFilter({ wrist: WRISTS.has(name) }));
+  if (!filters.has(name)) filters.set(name, new StableTurboPointFilter({ wrist: WRISTS.has(name) }));
   return filters.get(name);
 }
 
@@ -146,7 +170,7 @@ function filteredPoint(name, landmark, now) {
 }
 
 async function createLandmarker() {
-  trackingStatus.textContent = 'Ativando Super Turbo…';
+  trackingStatus.textContent = 'Ativando Super Turbo estável…';
   const vision = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
   );
@@ -158,9 +182,9 @@ async function createLandmarker() {
     },
     runningMode: 'VIDEO',
     numPoses: 1,
-    minPoseDetectionConfidence: 0.45,
-    minPosePresenceConfidence: 0.45,
-    minTrackingConfidence: 0.48,
+    minPoseDetectionConfidence: 0.5,
+    minPosePresenceConfidence: 0.5,
+    minTrackingConfidence: 0.55,
     outputSegmentationMasks: false
   };
 
@@ -182,8 +206,8 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 320 },
-      height: { ideal: 568 },
+      width: { ideal: 360 },
+      height: { ideal: 640 },
       aspectRatio: { ideal: 9 / 16 },
       frameRate: { ideal: 60, max: 60 },
       resizeMode: 'crop-and-scale'
@@ -249,7 +273,7 @@ function processFrame(now, metadata) {
       const wristsVisible = (pose[POINTS.left]?.visibility ?? 0) > 0.3
         && (pose[POINTS.right]?.visibility ?? 0) > 0.3;
       trackingStatus.textContent = wristsVisible
-        ? `${transportMode === 'direct' ? 'Super Turbo direto' : 'Super Turbo via servidor'} • olhe para a TV!`
+        ? `${transportMode === 'direct' ? 'Super Turbo estável direto' : 'Super Turbo estável via servidor'} • olhe para a TV!`
         : 'Mostre as duas mãos para a câmera.';
       emitPose(pose, true, current, processing);
     } else {
@@ -275,14 +299,14 @@ function processFrame(now, metadata) {
 socket.on('transport', ({ mode }) => {
   transportMode = mode;
   if (!running) return;
-  sensorBadge.textContent = mode === 'direct' ? `SUPER TURBO • ${room}` : `Servidor • ${room}`;
+  sensorBadge.textContent = mode === 'direct' ? `TURBO ESTÁVEL • ${room}` : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
 socket.on('room-status', ({ tv }) => {
   if (!running) return;
   sensorBadge.textContent = tv
-    ? `${transportMode === 'direct' ? 'SUPER TURBO' : 'TV conectada'} • ${room}`
+    ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
 });
@@ -303,7 +327,7 @@ startButton.addEventListener('click', async () => {
   }
 
   startButton.disabled = true;
-  startButton.textContent = 'Preparando Super Turbo…';
+  startButton.textContent = 'Preparando Turbo Estável…';
 
   try {
     await socket.connect();
