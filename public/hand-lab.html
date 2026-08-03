@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>MexeMundo — Laboratório de Mãos</title>
+  <link rel="stylesheet" href="/hand-lab.css" />
+</head>
+<body>
+  <header class="lab-header">
+    <div>
+      <span class="eyebrow">MEXEMUNDO • DIAGNÓSTICO</span>
+      <h1>Laboratório de Mãos</h1>
+      <p>Compara o pulso do Pose Landmarker com o centro da palma do Hand Landmarker, sem rede ou jogo.</p>
+    </div>
+    <a class="back-link" href="/">Voltar</a>
+  </header>
+
+  <main class="lab-layout">
+    <section class="camera-card">
+      <div class="camera-toolbar">
+        <div>
+          <strong id="statusText">Câmera desligada</strong>
+          <small id="statusDetail">O laboratório não altera os jogos.</small>
+        </div>
+        <select id="scheduleMode" aria-label="Modo de comparação">
+          <option value="compare">Comparar alternando</option>
+          <option value="hand">Somente mãos</option>
+          <option value="pose">Somente pose</option>
+        </select>
+      </div>
+
+      <div id="cameraStage" class="camera-stage">
+        <video id="camera" playsinline muted></video>
+        <canvas id="overlay" aria-label="Visualização do rastreamento"></canvas>
+        <div id="startPanel" class="start-panel">
+          <div class="start-icon">✋</div>
+          <h2>Teste direto no celular</h2>
+          <p>Deixe as duas mãos e a parte superior do corpo visíveis.</p>
+          <button id="startButton" type="button">Abrir câmera e carregar modelos</button>
+        </div>
+      </div>
+
+      <div class="legend" aria-label="Legenda">
+        <span><i class="dot hand-raw"></i> Palma bruta</span>
+        <span><i class="dot hand-stable"></i> Palma estabilizada</span>
+        <span><i class="dot pose-wrist"></i> Pulso do Pose</span>
+      </div>
+    </section>
+
+    <section class="panel metrics-panel">
+      <div class="panel-title">
+        <div>
+          <span class="eyebrow">AO VIVO</span>
+          <h2>Desempenho</h2>
+        </div>
+        <button id="clearButton" class="secondary" type="button">Limpar trajetórias</button>
+      </div>
+
+      <div class="metric-grid">
+        <article><span>Vídeo</span><strong id="cameraRate">0 fps</strong><small id="resolutionValue">—</small></article>
+        <article><span>Hand Landmarker</span><strong id="handRate">0/s</strong><small id="handTime">— ms</small></article>
+        <article><span>Pose Landmarker</span><strong id="poseRate">0/s</strong><small id="poseTime">— ms</small></article>
+        <article><span>Carga combinada</span><strong id="combinedTime">— ms</strong><small>por ciclo processado</small></article>
+      </div>
+
+      <div class="live-table" role="table" aria-label="Tremor ao vivo">
+        <div class="table-row header" role="row">
+          <span>Métrica RMS recente</span><span>Esquerda da tela</span><span>Direita da tela</span>
+        </div>
+        <div class="table-row" role="row">
+          <strong>Palma bruta</strong><span id="liveHandLeft">—</span><span id="liveHandRight">—</span>
+        </div>
+        <div class="table-row" role="row">
+          <strong>Palma estabilizada</strong><span id="liveStableLeft">—</span><span id="liveStableRight">—</span>
+        </div>
+        <div class="table-row" role="row">
+          <strong>Pulso do Pose</strong><span id="livePoseLeft">—</span><span id="livePoseRight">—</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel measurement-panel">
+      <div class="panel-title">
+        <div>
+          <span class="eyebrow">TESTE CONTROLADO</span>
+          <h2>Mãos paradas por 5 segundos</h2>
+        </div>
+        <button id="measureButton" type="button" disabled>Iniciar medição</button>
+      </div>
+      <p id="measureInstruction">Abra a câmera para começar.</p>
+      <div class="progress"><span id="measureProgress"></span></div>
+
+      <div class="result-grid">
+        <article>
+          <span>Palma bruta</span>
+          <strong id="measureHandResult">—</strong>
+          <small>média das duas mãos</small>
+        </article>
+        <article>
+          <span>Palma estabilizada</span>
+          <strong id="measureStableResult">—</strong>
+          <small>média das duas mãos</small>
+        </article>
+        <article>
+          <span>Pulso do Pose</span>
+          <strong id="measurePoseResult">—</strong>
+          <small>média dos dois pulsos</small>
+        </article>
+      </div>
+
+      <div class="protocol">
+        <strong>Protocolo</strong>
+        <p>Apoie o celular, use boa luz, mostre as duas mãos abertas e fique parado. Depois repita em “Somente mãos” para medir a frequência máxima do Hand Landmarker.</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/hand-lab.js"></script>
+</body>
+</html>
