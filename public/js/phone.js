@@ -1,8 +1,7 @@
 import { RealtimeClient } from './realtime.js';
 import {
   FilesetResolver,
-  PoseLandmarker,
-  DrawingUtils
+  PoseLandmarker
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm';
 
 const socket = new RealtimeClient();
@@ -12,7 +11,6 @@ const joinPanel = document.querySelector('#joinPanel');
 const cameraPanel = document.querySelector('#cameraPanel');
 const video = document.querySelector('#camera');
 const overlay = document.querySelector('#overlay');
-const ctx = overlay.getContext('2d');
 const sensorBadge = document.querySelector('#sensorBadge');
 const trackingStatus = document.querySelector('#trackingStatus');
 const processingValue = document.querySelector('#processingValue');
@@ -23,27 +21,26 @@ const poseQuality = document.querySelector('#poseQuality');
 const POINTS = {
   left: 15,
   right: 16,
-  leftElbow: 13,
-  rightElbow: 14,
   leftShoulder: 11,
-  rightShoulder: 12,
-  nose: 0
+  rightShoulder: 12
 };
+const POINT_NAMES = Object.keys(POINTS);
 const WRISTS = new Set(['left', 'right']);
-const drawingUtils = new DrawingUtils(ctx);
-const pointFilters = new Map();
+const filters = new Map();
+
+overlay.style.display = 'none';
 
 let landmarker;
 let running = false;
 let room = '';
 let lastVideoTime = -1;
-let lastOverlayAt = 0;
 let lastPoseAt = 0;
+let missingPoseSentAt = 0;
 let sentCounter = 0;
 let sentWindow = performance.now();
-let missingPoseSentAt = 0;
 let sequence = 0;
 let previousFrameAt = 0;
+let transportMode = 'relay';
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -56,119 +53,100 @@ function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
-function alphaFor(cutoff, dt) {
-  const tau = 1 / (2 * Math.PI * cutoff);
-  return 1 / (1 + tau / dt);
-}
-
-class OneEuroAxis {
-  constructor({ minCutoff, beta, dCutoff = 1 }) {
-    this.minCutoff = minCutoff;
-    this.beta = beta;
-    this.dCutoff = dCutoff;
-    this.value = null;
-    this.raw = null;
-    this.derivative = 0;
-    this.time = null;
-  }
-
-  reset() {
-    this.value = null;
-    this.raw = null;
-    this.derivative = 0;
-    this.time = null;
-  }
-
-  filter(raw, timeMs) {
-    if (this.time === null) {
-      this.value = raw;
-      this.raw = raw;
-      this.time = timeMs;
-      return { value: raw, velocity: 0 };
-    }
-
-    const dt = clamp((timeMs - this.time) / 1000, 1 / 120, 0.12);
-    const rawDerivative = (raw - this.raw) / dt;
-    const derivativeAlpha = alphaFor(this.dCutoff, dt);
-    this.derivative += (rawDerivative - this.derivative) * derivativeAlpha;
-
-    const cutoff = this.minCutoff + this.beta * Math.abs(this.derivative);
-    const valueAlpha = alphaFor(cutoff, dt);
-    this.value += (raw - this.value) * valueAlpha;
-    this.raw = raw;
-    this.time = timeMs;
-
-    return {
-      value: this.value,
-      velocity: clamp(this.derivative, -4, 4)
-    };
-  }
-}
-
-class PointFilter {
-  constructor(config) {
-    this.x = new OneEuroAxis(config);
-    this.y = new OneEuroAxis(config);
-    this.last = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
-  }
-
-  reset() {
-    this.x.reset();
-    this.y.reset();
-  }
-
-  filter(rawX, rawY, timeMs) {
-    const fx = this.x.filter(rawX, timeMs);
-    const fy = this.y.filter(rawY, timeMs);
-    this.last = { x: fx.value, y: fy.value, vx: fx.velocity, vy: fy.velocity };
-    return this.last;
-  }
-}
-
-function getPointFilter(name) {
-  if (!pointFilters.has(name)) {
-    const config = WRISTS.has(name)
-      ? { minCutoff: 1.15, beta: 0.34, dCutoff: 1.2 }
-      : { minCutoff: 0.82, beta: 0.16, dCutoff: 1.0 };
-    pointFilters.set(name, new PointFilter(config));
-  }
-  return pointFilters.get(name);
-}
-
-function resetFilters() {
-  for (const filter of pointFilters.values()) filter.reset();
-}
-
 function compact(value) {
   return Math.round(value * 10000) / 10000;
 }
 
-function filteredLandmark(name, landmark, now) {
-  const visible = (landmark?.visibility ?? 0) > 0.32;
-  const filter = getPointFilter(name);
-
-  if (!visible) {
-    return {
-      x: compact(filter.last.x),
-      y: compact(filter.last.y),
-      vx: 0,
-      vy: 0,
-      visible: false
-    };
+class SuperTurboPointFilter {
+  constructor({ wrist = false } = {}) {
+    this.wrist = wrist;
+    this.ready = false;
+    this.rawX = 0.5;
+    this.rawY = 0.5;
+    this.x = 0.5;
+    this.y = 0.5;
+    this.vx = 0;
+    this.vy = 0;
+    this.time = 0;
   }
 
-  const filtered = filter.filter(clamp(1 - landmark.x), clamp(landmark.y), now);
+  reset() {
+    this.ready = false;
+    this.vx = 0;
+    this.vy = 0;
+  }
+
+  filter(rawX, rawY, now) {
+    if (!this.ready) {
+      this.ready = true;
+      this.rawX = rawX;
+      this.rawY = rawY;
+      this.x = rawX;
+      this.y = rawY;
+      this.time = now;
+      return this.output();
+    }
+
+    const dt = clamp((now - this.time) / 1000, 1 / 120, 0.08);
+    const rawVx = (rawX - this.rawX) / dt;
+    const rawVy = (rawY - this.rawY) / dt;
+    const velocityBlend = this.wrist ? 0.72 : 0.45;
+    this.vx += (rawVx - this.vx) * velocityBlend;
+    this.vy += (rawVy - this.vy) * velocityBlend;
+
+    const dx = rawX - this.x;
+    const dy = rawY - this.y;
+    const distance = Math.hypot(dx, dy);
+    const speed = Math.hypot(this.vx, this.vy);
+    const deadZone = this.wrist && speed < 0.09 ? 0.0014 : 0.0007;
+
+    if (distance > deadZone) {
+      const baseAlpha = this.wrist ? 0.84 : 0.48;
+      const alpha = clamp(baseAlpha + distance * (this.wrist ? 6.5 : 2.5), baseAlpha, 1);
+      this.x += dx * alpha;
+      this.y += dy * alpha;
+    }
+
+    this.rawX = rawX;
+    this.rawY = rawY;
+    this.time = now;
+    return this.output();
+  }
+
+  output() {
+    return {
+      x: compact(clamp(this.x)),
+      y: compact(clamp(this.y)),
+      vx: compact(clamp(this.vx, -4, 4)),
+      vy: compact(clamp(this.vy, -4, 4))
+    };
+  }
+}
+
+function getFilter(name) {
+  if (!filters.has(name)) filters.set(name, new SuperTurboPointFilter({ wrist: WRISTS.has(name) }));
+  return filters.get(name);
+}
+
+function resetFilters() {
+  for (const filter of filters.values()) filter.reset();
+}
+
+function filteredPoint(name, landmark, now) {
+  const filter = getFilter(name);
+  const visible = (landmark?.visibility ?? 0) > 0.3;
+  if (!visible) {
+    const last = filter.output();
+    return { ...last, vx: 0, vy: 0, visible: false };
+  }
   return {
-    x: compact(clamp(filtered.x)),
-    y: compact(clamp(filtered.y)),
-    vx: compact(filtered.vx),
-    vy: compact(filtered.vy),
+    ...filter.filter(clamp(1 - landmark.x), clamp(landmark.y), now),
     visible: true
   };
 }
 
 async function createLandmarker() {
-  trackingStatus.textContent = 'Carregando inteligência de movimento…';
+  trackingStatus.textContent = 'Ativando Super Turbo…';
   const vision = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
   );
@@ -180,9 +158,9 @@ async function createLandmarker() {
     },
     runningMode: 'VIDEO',
     numPoses: 1,
-    minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.55,
+    minPoseDetectionConfidence: 0.45,
+    minPosePresenceConfidence: 0.45,
+    minTrackingConfidence: 0.48,
     outputSegmentationMasks: false
   };
 
@@ -204,62 +182,39 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 480 },
-      height: { ideal: 640 },
-      frameRate: { ideal: 30, max: 30 }
+      width: { ideal: 320 },
+      height: { ideal: 568 },
+      aspectRatio: { ideal: 9 / 16 },
+      frameRate: { ideal: 60, max: 60 },
+      resizeMode: 'crop-and-scale'
     }
   });
 
+  const [track] = stream.getVideoTracks();
+  if (track && 'contentHint' in track) track.contentHint = 'motion';
   video.srcObject = stream;
   await video.play();
 }
 
-function fitCanvas() {
-  const width = video.videoWidth || 480;
-  const height = video.videoHeight || 640;
-  if (overlay.width !== width || overlay.height !== height) {
-    overlay.width = width;
-    overlay.height = height;
-  }
-}
-
 function averageVisibility(pose) {
-  const important = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26];
-  const total = important.reduce((sum, index) => sum + (pose[index]?.visibility ?? 0), 0);
-  return total / important.length;
-}
-
-function drawPose(pose) {
-  drawingUtils.drawConnectors(pose, PoseLandmarker.POSE_CONNECTIONS, {
-    color: 'rgba(255,255,255,.62)',
-    lineWidth: 3
-  });
-  drawingUtils.drawLandmarks(pose, {
-    color: '#ffcf4a',
-    fillColor: '#6938ef',
-    radius: 3,
-    lineWidth: 1
-  });
+  return POINT_NAMES.reduce((sum, name) => sum + (pose[POINTS[name]]?.visibility ?? 0), 0) / POINT_NAMES.length;
 }
 
 function emitPose(pose, detected, now, processingMs) {
   const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
   previousFrameAt = now;
+  const hidden = (x, y) => ({ x, y, vx: 0, vy: 0, visible: false });
   const payload = {
     detected,
     sequence: ++sequence,
     capturedAt: Date.now(),
     processingMs: Math.round(processingMs),
     sourceIntervalMs: Math.round(sourceIntervalMs),
-    left: detected ? filteredLandmark('left', pose[POINTS.left], now) : { x: 0.35, y: 0.55, vx: 0, vy: 0, visible: false },
-    right: detected ? filteredLandmark('right', pose[POINTS.right], now) : { x: 0.65, y: 0.55, vx: 0, vy: 0, visible: false },
-    leftElbow: detected ? filteredLandmark('leftElbow', pose[POINTS.leftElbow], now) : { x: 0.4, y: 0.48, vx: 0, vy: 0, visible: false },
-    rightElbow: detected ? filteredLandmark('rightElbow', pose[POINTS.rightElbow], now) : { x: 0.6, y: 0.48, vx: 0, vy: 0, visible: false },
-    leftShoulder: detected ? filteredLandmark('leftShoulder', pose[POINTS.leftShoulder], now) : { x: 0.44, y: 0.35, vx: 0, vy: 0, visible: false },
-    rightShoulder: detected ? filteredLandmark('rightShoulder', pose[POINTS.rightShoulder], now) : { x: 0.56, y: 0.35, vx: 0, vy: 0, visible: false },
-    nose: detected ? filteredLandmark('nose', pose[POINTS.nose], now) : { x: 0.5, y: 0.2, vx: 0, vy: 0, visible: false }
+    left: detected ? filteredPoint('left', pose[POINTS.left], now) : hidden(0.35, 0.55),
+    right: detected ? filteredPoint('right', pose[POINTS.right], now) : hidden(0.65, 0.55),
+    leftShoulder: detected ? filteredPoint('leftShoulder', pose[POINTS.leftShoulder], now) : hidden(0.44, 0.35),
+    rightShoulder: detected ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now) : hidden(0.56, 0.35)
   };
-
   if (socket.emit('pose', payload)) sentCounter += 1;
 }
 
@@ -274,47 +229,35 @@ function schedulePrediction() {
 
 function processFrame(now, metadata) {
   if (!running) return;
-  fitCanvas();
-
   const mediaTime = metadata?.mediaTime ?? video.currentTime;
+
   if (mediaTime !== lastVideoTime && video.readyState >= 2) {
     lastVideoTime = mediaTime;
     const startedAt = performance.now();
     const result = landmarker.detectForVideo(video, startedAt);
     const processing = performance.now() - startedAt;
-    processingValue.textContent = `${Math.round(processing)} ms`;
-
     const pose = result.landmarks?.[0];
     const current = performance.now();
+    processingValue.textContent = `${Math.round(processing)} ms`;
 
     if (pose) {
       lastPoseAt = current;
       const quality = averageVisibility(pose);
-      const qualityPercent = Math.round(quality * 100);
-      poseQuality.textContent = `${qualityPercent}%`;
-      poseQuality.className = `quality-badge ${quality > 0.72 ? 'good' : quality > 0.5 ? 'medium' : 'low'}`;
+      poseQuality.textContent = `${Math.round(quality * 100)}%`;
+      poseQuality.className = `quality-badge ${quality > 0.7 ? 'good' : quality > 0.48 ? 'medium' : 'low'}`;
 
-      const wristsVisible = (pose[15]?.visibility ?? 0) > 0.32 && (pose[16]?.visibility ?? 0) > 0.32;
+      const wristsVisible = (pose[POINTS.left]?.visibility ?? 0) > 0.3
+        && (pose[POINTS.right]?.visibility ?? 0) > 0.3;
       trackingStatus.textContent = wristsVisible
-        ? 'Movimento estabilizado. Olhe para a TV!'
+        ? `${transportMode === 'direct' ? 'Super Turbo direto' : 'Super Turbo via servidor'} • olhe para a TV!`
         : 'Mostre as duas mãos para a câmera.';
-
       emitPose(pose, true, current, processing);
-
-      // O desenho é apenas diagnóstico e não precisa disputar 30 FPS com a IA.
-      if (current - lastOverlayAt >= 100) {
-        ctx.clearRect(0, 0, overlay.width, overlay.height);
-        drawPose(pose);
-        lastOverlayAt = current;
-      }
     } else {
       poseQuality.textContent = '0%';
       poseQuality.className = 'quality-badge low';
-      trackingStatus.textContent = 'Afaste-se até aparecer o corpo inteiro.';
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-      if (current - lastPoseAt > 350) resetFilters();
-      if (current - missingPoseSentAt >= 120) {
+      trackingStatus.textContent = 'Afaste-se até aparecer a parte superior do corpo.';
+      if (current - lastPoseAt > 250) resetFilters();
+      if (current - missingPoseSentAt >= 100) {
         emitPose(null, false, current, processing);
         missingPoseSentAt = current;
       }
@@ -326,13 +269,21 @@ function processFrame(now, metadata) {
       sentWindow = current;
     }
   }
-
   schedulePrediction();
 }
 
+socket.on('transport', ({ mode }) => {
+  transportMode = mode;
+  if (!running) return;
+  sensorBadge.textContent = mode === 'direct' ? `SUPER TURBO • ${room}` : `Servidor • ${room}`;
+  sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
+});
+
 socket.on('room-status', ({ tv }) => {
   if (!running) return;
-  sensorBadge.textContent = tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
+  sensorBadge.textContent = tv
+    ? `${transportMode === 'direct' ? 'SUPER TURBO' : 'TV conectada'} • ${room}`
+    : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
 });
 
@@ -352,7 +303,7 @@ startButton.addEventListener('click', async () => {
   }
 
   startButton.disabled = true;
-  startButton.textContent = 'Preparando…';
+  startButton.textContent = 'Preparando Super Turbo…';
 
   try {
     await socket.connect();
@@ -361,7 +312,6 @@ startButton.addEventListener('click', async () => {
 
     landmarker = await createLandmarker();
     await startCamera();
-
     joinPanel.classList.add('hidden');
     cameraPanel.classList.remove('hidden');
     roomValue.textContent = room;
