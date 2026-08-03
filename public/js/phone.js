@@ -20,15 +20,30 @@ const sendValue = document.querySelector('#sendValue');
 const roomValue = document.querySelector('#roomValue');
 const poseQuality = document.querySelector('#poseQuality');
 
+const POINTS = {
+  left: 15,
+  right: 16,
+  leftElbow: 13,
+  rightElbow: 14,
+  leftShoulder: 11,
+  rightShoulder: 12,
+  nose: 0
+};
+const WRISTS = new Set(['left', 'right']);
+const drawingUtils = new DrawingUtils(ctx);
+const pointFilters = new Map();
+
 let landmarker;
 let running = false;
 let room = '';
 let lastVideoTime = -1;
-let lastSentAt = 0;
+let lastOverlayAt = 0;
+let lastPoseAt = 0;
 let sentCounter = 0;
 let sentWindow = performance.now();
 let missingPoseSentAt = 0;
-const drawingUtils = new DrawingUtils(ctx);
+let sequence = 0;
+let previousFrameAt = 0;
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -36,6 +51,121 @@ if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
 roomInput.addEventListener('input', () => {
   roomInput.value = roomInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 });
+
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function alphaFor(cutoff, dt) {
+  const tau = 1 / (2 * Math.PI * cutoff);
+  return 1 / (1 + tau / dt);
+}
+
+class OneEuroAxis {
+  constructor({ minCutoff, beta, dCutoff = 1 }) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.value = null;
+    this.raw = null;
+    this.derivative = 0;
+    this.time = null;
+  }
+
+  reset() {
+    this.value = null;
+    this.raw = null;
+    this.derivative = 0;
+    this.time = null;
+  }
+
+  filter(raw, timeMs) {
+    if (this.time === null) {
+      this.value = raw;
+      this.raw = raw;
+      this.time = timeMs;
+      return { value: raw, velocity: 0 };
+    }
+
+    const dt = clamp((timeMs - this.time) / 1000, 1 / 120, 0.12);
+    const rawDerivative = (raw - this.raw) / dt;
+    const derivativeAlpha = alphaFor(this.dCutoff, dt);
+    this.derivative += (rawDerivative - this.derivative) * derivativeAlpha;
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(this.derivative);
+    const valueAlpha = alphaFor(cutoff, dt);
+    this.value += (raw - this.value) * valueAlpha;
+    this.raw = raw;
+    this.time = timeMs;
+
+    return {
+      value: this.value,
+      velocity: clamp(this.derivative, -4, 4)
+    };
+  }
+}
+
+class PointFilter {
+  constructor(config) {
+    this.x = new OneEuroAxis(config);
+    this.y = new OneEuroAxis(config);
+    this.last = { x: 0.5, y: 0.5, vx: 0, vy: 0 };
+  }
+
+  reset() {
+    this.x.reset();
+    this.y.reset();
+  }
+
+  filter(rawX, rawY, timeMs) {
+    const fx = this.x.filter(rawX, timeMs);
+    const fy = this.y.filter(rawY, timeMs);
+    this.last = { x: fx.value, y: fy.value, vx: fx.velocity, vy: fy.velocity };
+    return this.last;
+  }
+}
+
+function getPointFilter(name) {
+  if (!pointFilters.has(name)) {
+    const config = WRISTS.has(name)
+      ? { minCutoff: 1.15, beta: 0.34, dCutoff: 1.2 }
+      : { minCutoff: 0.82, beta: 0.16, dCutoff: 1.0 };
+    pointFilters.set(name, new PointFilter(config));
+  }
+  return pointFilters.get(name);
+}
+
+function resetFilters() {
+  for (const filter of pointFilters.values()) filter.reset();
+}
+
+function compact(value) {
+  return Math.round(value * 10000) / 10000;
+}
+
+function filteredLandmark(name, landmark, now) {
+  const visible = (landmark?.visibility ?? 0) > 0.32;
+  const filter = getPointFilter(name);
+
+  if (!visible) {
+    return {
+      x: compact(filter.last.x),
+      y: compact(filter.last.y),
+      vx: 0,
+      vy: 0,
+      visible: false
+    };
+  }
+
+  const filtered = filter.filter(clamp(1 - landmark.x), clamp(landmark.y), now);
+  return {
+    x: compact(clamp(filtered.x)),
+    y: compact(clamp(filtered.y)),
+    vx: compact(filtered.vx),
+    vy: compact(filtered.vy),
+    visible: true
+  };
+}
 
 async function createLandmarker() {
   trackingStatus.textContent = 'Carregando inteligência de movimento…';
@@ -50,9 +180,9 @@ async function createLandmarker() {
     },
     runningMode: 'VIDEO',
     numPoses: 1,
-    minPoseDetectionConfidence: 0.45,
-    minPosePresenceConfidence: 0.45,
-    minTrackingConfidence: 0.45,
+    minPoseDetectionConfidence: 0.5,
+    minPosePresenceConfidence: 0.5,
+    minTrackingConfidence: 0.55,
     outputSegmentationMasks: false
   };
 
@@ -74,8 +204,8 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 720 },
-      height: { ideal: 1280 },
+      width: { ideal: 480 },
+      height: { ideal: 640 },
       frameRate: { ideal: 30, max: 30 }
     }
   });
@@ -84,22 +214,9 @@ async function startCamera() {
   await video.play();
 }
 
-function clamp(value) {
-  return Math.max(0, Math.min(1, value));
-}
-
-function normalizedLandmark(landmark) {
-  return {
-    x: clamp(1 - landmark.x),
-    y: clamp(landmark.y),
-    z: Number.isFinite(landmark.z) ? landmark.z : 0,
-    visible: (landmark.visibility ?? 1) > 0.35
-  };
-}
-
 function fitCanvas() {
-  const width = video.videoWidth || 720;
-  const height = video.videoHeight || 1280;
+  const width = video.videoWidth || 480;
+  const height = video.videoHeight || 640;
   if (overlay.width !== width || overlay.height !== height) {
     overlay.width = width;
     overlay.height = height;
@@ -114,83 +231,103 @@ function averageVisibility(pose) {
 
 function drawPose(pose) {
   drawingUtils.drawConnectors(pose, PoseLandmarker.POSE_CONNECTIONS, {
-    color: 'rgba(255,255,255,.65)',
-    lineWidth: 4
+    color: 'rgba(255,255,255,.62)',
+    lineWidth: 3
   });
   drawingUtils.drawLandmarks(pose, {
     color: '#ffcf4a',
     fillColor: '#6938ef',
-    radius: 4,
-    lineWidth: 2
+    radius: 3,
+    lineWidth: 1
   });
 }
 
-function emitPose(pose, detected) {
+function emitPose(pose, detected, now, processingMs) {
+  const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
+  previousFrameAt = now;
   const payload = {
     detected,
+    sequence: ++sequence,
     capturedAt: Date.now(),
-    left: detected ? normalizedLandmark(pose[15]) : { x: 0.35, y: 0.55, z: 0, visible: false },
-    right: detected ? normalizedLandmark(pose[16]) : { x: 0.65, y: 0.55, z: 0, visible: false },
-    leftElbow: detected ? normalizedLandmark(pose[13]) : { x: 0.4, y: 0.48, z: 0, visible: false },
-    rightElbow: detected ? normalizedLandmark(pose[14]) : { x: 0.6, y: 0.48, z: 0, visible: false },
-    leftShoulder: detected ? normalizedLandmark(pose[11]) : { x: 0.44, y: 0.35, z: 0, visible: false },
-    rightShoulder: detected ? normalizedLandmark(pose[12]) : { x: 0.56, y: 0.35, z: 0, visible: false },
-    nose: detected ? normalizedLandmark(pose[0]) : { x: 0.5, y: 0.2, z: 0, visible: false }
+    processingMs: Math.round(processingMs),
+    sourceIntervalMs: Math.round(sourceIntervalMs),
+    left: detected ? filteredLandmark('left', pose[POINTS.left], now) : { x: 0.35, y: 0.55, vx: 0, vy: 0, visible: false },
+    right: detected ? filteredLandmark('right', pose[POINTS.right], now) : { x: 0.65, y: 0.55, vx: 0, vy: 0, visible: false },
+    leftElbow: detected ? filteredLandmark('leftElbow', pose[POINTS.leftElbow], now) : { x: 0.4, y: 0.48, vx: 0, vy: 0, visible: false },
+    rightElbow: detected ? filteredLandmark('rightElbow', pose[POINTS.rightElbow], now) : { x: 0.6, y: 0.48, vx: 0, vy: 0, visible: false },
+    leftShoulder: detected ? filteredLandmark('leftShoulder', pose[POINTS.leftShoulder], now) : { x: 0.44, y: 0.35, vx: 0, vy: 0, visible: false },
+    rightShoulder: detected ? filteredLandmark('rightShoulder', pose[POINTS.rightShoulder], now) : { x: 0.56, y: 0.35, vx: 0, vy: 0, visible: false },
+    nose: detected ? filteredLandmark('nose', pose[POINTS.nose], now) : { x: 0.5, y: 0.2, vx: 0, vy: 0, visible: false }
   };
 
-  socket.emit('pose', payload);
-  sentCounter += 1;
+  if (socket.emit('pose', payload)) sentCounter += 1;
 }
 
-async function predict() {
+function schedulePrediction() {
+  if (!running) return;
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    video.requestVideoFrameCallback(processFrame);
+  } else {
+    requestAnimationFrame((now) => processFrame(now, { mediaTime: video.currentTime }));
+  }
+}
+
+function processFrame(now, metadata) {
   if (!running) return;
   fitCanvas();
 
-  if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
-    lastVideoTime = video.currentTime;
+  const mediaTime = metadata?.mediaTime ?? video.currentTime;
+  if (mediaTime !== lastVideoTime && video.readyState >= 2) {
+    lastVideoTime = mediaTime;
     const startedAt = performance.now();
     const result = landmarker.detectForVideo(video, startedAt);
     const processing = performance.now() - startedAt;
     processingValue.textContent = `${Math.round(processing)} ms`;
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
 
     const pose = result.landmarks?.[0];
-    const now = performance.now();
+    const current = performance.now();
 
     if (pose) {
-      drawPose(pose);
+      lastPoseAt = current;
       const quality = averageVisibility(pose);
       const qualityPercent = Math.round(quality * 100);
       poseQuality.textContent = `${qualityPercent}%`;
       poseQuality.className = `quality-badge ${quality > 0.72 ? 'good' : quality > 0.5 ? 'medium' : 'low'}`;
 
-      const wristsVisible = (pose[15]?.visibility ?? 0) > 0.35 && (pose[16]?.visibility ?? 0) > 0.35;
+      const wristsVisible = (pose[15]?.visibility ?? 0) > 0.32 && (pose[16]?.visibility ?? 0) > 0.32;
       trackingStatus.textContent = wristsVisible
-        ? 'Tudo certo! Olhe para a TV.'
+        ? 'Movimento estabilizado. Olhe para a TV!'
         : 'Mostre as duas mãos para a câmera.';
 
-      if (now - lastSentAt >= 33) {
-        emitPose(pose, true);
-        lastSentAt = now;
+      emitPose(pose, true, current, processing);
+
+      // O desenho é apenas diagnóstico e não precisa disputar 30 FPS com a IA.
+      if (current - lastOverlayAt >= 100) {
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        drawPose(pose);
+        lastOverlayAt = current;
       }
     } else {
       poseQuality.textContent = '0%';
       poseQuality.className = 'quality-badge low';
       trackingStatus.textContent = 'Afaste-se até aparecer o corpo inteiro.';
-      if (now - missingPoseSentAt >= 120) {
-        emitPose(null, false);
-        missingPoseSentAt = now;
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      if (current - lastPoseAt > 350) resetFilters();
+      if (current - missingPoseSentAt >= 120) {
+        emitPose(null, false, current, processing);
+        missingPoseSentAt = current;
       }
     }
 
-    if (now - sentWindow >= 1000) {
+    if (current - sentWindow >= 1000) {
       sendValue.textContent = `${sentCounter}/s`;
       sentCounter = 0;
-      sentWindow = now;
+      sentWindow = current;
     }
   }
 
-  requestAnimationFrame(predict);
+  schedulePrediction();
 }
 
 socket.on('room-status', ({ tv }) => {
@@ -231,7 +368,7 @@ startButton.addEventListener('click', async () => {
     sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
-    predict();
+    schedulePrediction();
   } catch (error) {
     console.error(error);
     alert(`Falha ao iniciar: ${error.message}`);
