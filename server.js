@@ -44,9 +44,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.8.2',
+      version: '0.8.4',
       games: ['balloons', 'goalkeeper'],
-      interaction: 'calibrated-hand-cursor',
+      interaction: 'dual-hand-calibrated-cursor',
       session: 'seamless-role-handoff',
       transport: 'webrtc-dual-channel-adaptive'
     }));
@@ -200,9 +200,6 @@ function handleMessage(client, rawMessage) {
       payload: { ok: true, room, status: roomStatus(room) }
     });
 
-    // Algumas telas antigas só instalam o listener de room-status depois que o
-    // pedido de join resolve. Reenvia o estado quando a página já terminou de
-    // inicializar, sem exigir que o celular digite o código novamente.
     setTimeout(() => sendRoomStatus(client, room), 120);
     return;
   }
