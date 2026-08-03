@@ -4,22 +4,41 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#6938ef" />
-  <title>MexeMundo — Protótipo infantil</title>
+  <title>MexeMundo — Escolha um jogo</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/goalkeeper.css" />
 </head>
 <body class="landing-page">
-  <main class="landing-card">
+  <main class="landing-card game-hub">
     <div class="brand-orbit" aria-hidden="true">
-      <span>⭐</span><span>🎈</span><span>🌈</span>
+      <span>⭐</span><span>⚽</span><span>🎈</span>
     </div>
-    <span class="eyebrow">PROTÓTIPO JOGÁVEL 0.2</span>
+    <span class="eyebrow">PROTÓTIPO JOGÁVEL 0.7</span>
     <h1>MexeMundo</h1>
-    <p class="landing-lead">A câmera do celular acompanha as mãos. A brincadeira acontece em outra tela.</p>
-    <div class="actions">
-      <a class="button primary" href="/tv">Abrir tela do jogo</a>
+    <p class="landing-lead">Escolha uma brincadeira na TV. O mesmo celular vira o sensor corporal para todos os jogos.</p>
+
+    <section class="game-grid" aria-label="Jogos disponíveis">
+      <a class="game-card balloon-game" href="/tv">
+        <span class="game-icon" aria-hidden="true">🎈</span>
+        <span class="game-tag">AGILIDADE</span>
+        <strong>Estoura-Balões</strong>
+        <p>Movimente as mãos, faça combos e estoure o máximo de balões.</p>
+        <span class="game-cta">Jogar agora →</span>
+      </a>
+
+      <a class="game-card goalkeeper-game" href="/goleiro">
+        <span class="game-icon" aria-hidden="true">🧤</span>
+        <span class="game-tag">REFLEXO</span>
+        <strong>Goleiro Maluco</strong>
+        <p>Proteja o gol, defenda bolas rápidas e construa uma sequência.</p>
+        <span class="game-cta">Jogar agora →</span>
+      </a>
+    </section>
+
+    <div class="sensor-entry">
       <a class="button secondary" href="/celular">Usar celular como sensor</a>
+      <p class="helper-text">Abra primeiro o jogo na TV para receber o código da sala.</p>
     </div>
-    <p class="helper-text">Primeiro jogo: <strong>Estoura-Balões</strong>.</p>
   </main>
 </body>
 </html>
