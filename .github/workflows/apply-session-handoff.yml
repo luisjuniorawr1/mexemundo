@@ -1,0 +1,338 @@
+name: Apply seamless session handoff
+
+on:
+  push:
+    paths:
+      - .github/workflows/apply-session-handoff.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply resilient room handoff
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(text, old, new, label):
+              if new in text:
+                  return text
+              if old not in text:
+                  raise SystemExit(f'Pattern not found: {label}')
+              return text.replace(old, new, 1)
+
+          keeper = r'''export class SessionKeeper {
+            constructor({
+              client,
+              room,
+              role,
+              onStatus = null,
+              onReconnect = null,
+              onWaiting = null,
+              intervalMs = 900
+            } = {}) {
+              if (!client) throw new Error('Cliente realtime obrigatório.');
+              this.client = client;
+              this.room = room;
+              this.role = role;
+              this.onStatus = onStatus;
+              this.onReconnect = onReconnect;
+              this.onWaiting = onWaiting;
+              this.intervalMs = intervalMs;
+              this.active = false;
+              this.busy = false;
+              this.timer = null;
+              this.retryTimer = null;
+              this.attempts = 0;
+              this.handleWake = () => this.ensure();
+              this.handleVisibility = () => {
+                if (!document.hidden) this.ensure();
+              };
+
+              this.client.on('disconnect', () => {
+                if (!this.active) return;
+                this.onWaiting?.();
+                this.schedule(180);
+              });
+
+              this.client.on('session-replaced', () => {
+                this.stop();
+              });
+            }
+
+            start() {
+              if (this.active) return;
+              this.active = true;
+              window.addEventListener('online', this.handleWake);
+              window.addEventListener('pageshow', this.handleWake);
+              document.addEventListener('visibilitychange', this.handleVisibility);
+              this.timer = setInterval(() => this.ensure(), this.intervalMs);
+            }
+
+            stop() {
+              this.active = false;
+              clearInterval(this.timer);
+              clearTimeout(this.retryTimer);
+              this.timer = null;
+              this.retryTimer = null;
+              window.removeEventListener('online', this.handleWake);
+              window.removeEventListener('pageshow', this.handleWake);
+              document.removeEventListener('visibilitychange', this.handleVisibility);
+            }
+
+            socketOpen() {
+              return this.client.socket?.readyState === WebSocket.OPEN;
+            }
+
+            schedule(delay = null) {
+              if (!this.active || this.retryTimer) return;
+              const wait = delay ?? Math.min(4000, 320 * (2 ** Math.min(this.attempts, 4)));
+              this.retryTimer = setTimeout(() => {
+                this.retryTimer = null;
+                this.ensure(true);
+              }, wait);
+            }
+
+            async ensure(force = false) {
+              if (!this.active || this.busy) return null;
+              if (!force && this.socketOpen()) return null;
+
+              this.busy = true;
+              try {
+                await this.client.connect();
+                const joined = await this.client.request('join', {
+                  room: this.room,
+                  role: this.role
+                }, 2800);
+                if (!joined?.ok) throw new Error(joined?.error || 'Falha ao retomar a sala.');
+                this.attempts = 0;
+                this.onStatus?.(joined.status ?? {});
+                this.onReconnect?.(joined);
+                return joined;
+              } catch (error) {
+                this.attempts += 1;
+                this.schedule();
+                return null;
+              } finally {
+                this.busy = false;
+              }
+            }
+          }
+          '''
+          Path('public/js/session-keeper.js').write_text(keeper.strip() + '\n')
+
+          server_file = Path('server.js')
+          server = server_file.read_text()
+          old_add = '''function addToRoom(client, room, role) {
+            removeFromRoom(client);
+            client.room = room;
+            client.role = role;
+
+            const members = rooms.get(room) ?? new Set();
+            members.add(client);
+            rooms.set(room, members);
+            broadcastRoomStatus(room);
+          }'''
+          new_add = '''function addToRoom(client, room, role) {
+            removeFromRoom(client);
+
+            const members = rooms.get(room) ?? new Set();
+            const replaced = [];
+            for (const member of [...members]) {
+              if (member !== client && member.role === role) {
+                members.delete(member);
+                member.room = '';
+                member.role = '';
+                replaced.push(member);
+              }
+            }
+
+            client.room = room;
+            client.role = role;
+            members.add(client);
+            rooms.set(room, members);
+            broadcastRoomStatus(room);
+
+            for (const member of replaced) {
+              sendJson(member, {
+                type: 'session-replaced',
+                payload: { room, role }
+              });
+              setTimeout(() => {
+                if (member.readyState === WebSocket.OPEN) {
+                  member.close(4001, 'Sessão substituída por uma nova tela.');
+                }
+              }, 30);
+            }
+          }'''
+          server = replace_once(server, old_add, new_add, 'single active role per room')
+          server = server.replace("version: '0.8.0'", "version: '0.8.1'", 1)
+          server = server.replace(
+              "interaction: 'calibrated-hand-cursor',",
+              "interaction: 'calibrated-hand-cursor',\n      session: 'seamless-role-handoff',",
+              1
+          )
+          server_file.write_text(server)
+
+          def patch_game(path):
+              file = Path(path)
+              text = file.read_text()
+              text = replace_once(
+                  text,
+                  "import { RealtimeClient } from './realtime.js';",
+                  "import { RealtimeClient } from './realtime.js';\nimport { SessionKeeper } from './session-keeper.js';",
+                  f'{path} keeper import'
+              )
+              marker = "socket.on('disconnect', () => updateConnection({ phone: false }));"
+              addition = marker + "\nconst sessionKeeper = new SessionKeeper({\n  client: socket,\n  room,\n  role: 'tv',\n  onStatus: updateConnection,\n  onWaiting: () => updateConnection({ phone: false })\n});\nsessionKeeper.start();"
+              text = replace_once(text, marker, addition, f'{path} keeper setup')
+              file.write_text(text)
+
+          patch_game('public/js/tv.js')
+          patch_game('public/js/goalkeeper.js')
+
+          menu_file = Path('public/js/menu.js')
+          menu = menu_file.read_text()
+          menu = replace_once(
+              menu,
+              "import { RealtimeClient } from './realtime.js';",
+              "import { RealtimeClient } from './realtime.js';\nimport { SessionKeeper } from './session-keeper.js';",
+              'menu keeper import'
+          )
+          old_status = '''socket.on('room-status', ({ phone }) => {
+            phoneConnected = Boolean(phone);
+            connectionBadge.textContent = phoneConnected
+              ? (transportMode === 'direct' ? 'Conexão direta' : 'Celular conectado')
+              : 'Aguardando celular';
+            connectionBadge.className = `badge ${phoneConnected ? 'online' : 'waiting'}`;
+
+            if (!phoneConnected) {
+              setState('pairing');
+              return;
+            }
+
+            if (getMotionProfile()) showMenu();
+            else startCalibration();
+          });'''
+          new_status = '''function applyRoomStatus({ phone } = {}) {
+            phoneConnected = Boolean(phone);
+            connectionBadge.textContent = phoneConnected
+              ? (transportMode === 'direct' ? 'Conexão direta' : 'Celular conectado')
+              : 'Aguardando celular';
+            connectionBadge.className = `badge ${phoneConnected ? 'online' : 'waiting'}`;
+
+            if (!phoneConnected) {
+              setState('pairing');
+              return;
+            }
+
+            if (getMotionProfile()) showMenu();
+            else startCalibration();
+          }
+
+          socket.on('room-status', applyRoomStatus);'''
+          menu = replace_once(menu, old_status, new_status, 'menu status helper')
+          old_join = '''const joined = await socket.request('join', { room, role: 'tv' });
+          phoneConnected = Boolean(joined?.status?.phone);
+          if (phoneConnected) {
+            if (getMotionProfile()) showMenu();
+            else startCalibration();
+          } else {
+            setState('pairing');
+          }'''
+          new_join = '''const joined = await socket.request('join', { room, role: 'tv' });
+          applyRoomStatus(joined?.status ?? {});
+
+          const sessionKeeper = new SessionKeeper({
+            client: socket,
+            room,
+            role: 'tv',
+            onStatus: applyRoomStatus,
+            onWaiting: () => applyRoomStatus({ phone: false })
+          });
+          sessionKeeper.start();'''
+          menu = replace_once(menu, old_join, new_join, 'menu keeper join')
+          menu_file.write_text(menu)
+
+          phone_file = Path('public/js/phone.js')
+          phone = phone_file.read_text()
+          phone = replace_once(
+              phone,
+              "import { RealtimeClient } from './realtime.js';",
+              "import { RealtimeClient } from './realtime.js';\nimport { SessionKeeper } from './session-keeper.js';",
+              'phone keeper import'
+          )
+          phone = replace_once(
+              phone,
+              "let transportMode = 'relay';",
+              "let transportMode = 'relay';\nlet sessionKeeper = null;",
+              'phone keeper variable'
+          )
+          old_phone_status = '''socket.on('room-status', ({ tv }) => {
+            if (!running) return;
+            sensorBadge.textContent = tv
+              ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
+              : `Aguardando TV • ${room}`;
+            sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
+          });'''
+          new_phone_status = '''function applyTvStatus({ tv } = {}) {
+            if (!running) return;
+            sensorBadge.textContent = tv
+              ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
+              : `Aguardando TV • ${room}`;
+            sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
+          }
+
+          socket.on('room-status', applyTvStatus);'''
+          phone = replace_once(phone, old_phone_status, new_phone_status, 'phone status helper')
+          old_running = '''    running = true;
+            schedulePrediction();'''
+          new_running = '''    running = true;
+            sessionKeeper?.stop();
+            sessionKeeper = new SessionKeeper({
+              client: socket,
+              room,
+              role: 'phone',
+              onStatus: applyTvStatus,
+              onWaiting: () => {
+                sensorBadge.textContent = `Reconectando • ${room}`;
+                sensorBadge.className = 'badge waiting';
+              }
+            });
+            sessionKeeper.start();
+            schedulePrediction();'''
+          phone = replace_once(phone, old_running, new_running, 'phone keeper start')
+          phone_file.write_text(phone)
+
+          package_file = Path('package.json')
+          package = json.loads(package_file.read_text())
+          package['version'] = '0.8.1'
+          package['scripts']['check'] = 'node --check server.js && node --check public/js/realtime.js && node --check public/js/session-keeper.js && node --check public/js/motion-ui.js && node --check public/js/menu.js && node --check public/js/tv.js && node --check public/js/goalkeeper.js && node --check public/js/phone.js'
+          package_file.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Validate JavaScript
+        run: npm run check
+
+      - name: Commit seamless handoff and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js package.json public/js/session-keeper.js public/js/menu.js public/js/tv.js public/js/goalkeeper.js public/js/phone.js
+          git rm .github/workflows/apply-session-handoff.yml
+          git commit -m "Fix seamless phone handoff between screens"
+          git push
