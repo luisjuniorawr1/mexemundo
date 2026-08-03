@@ -6,7 +6,7 @@ Primeiro protótipo jogável de uma plataforma infantil de minijogos corporais.
 
 - Uma tela abre o jogo em `/tv` e cria um código de sala.
 - O celular entra em `/celular`, abre a câmera e detecta o corpo com MediaPipe.
-- O celular envia apenas coordenadas dos pontos corporais por WebSocket nativo.
+- O celular envia somente coordenadas dos pontos corporais por WebSocket.
 - A TV faz calibração automática quando reconhece as duas mãos.
 - O jogo **Estoura-Balões** tem rodada de 45 segundos, pontuação, combo, balões especiais, partículas, sons e tela de resultado.
 - É possível reiniciar pelo botão ou mantendo as duas mãos levantadas por 2 segundos.
@@ -14,7 +14,7 @@ Primeiro protótipo jogável de uma plataforma infantil de minijogos corporais.
 
 ## Requisitos
 
-- Node.js 20 ou superior. O servidor não possui dependências externas.
+- Node.js 18 ou superior.
 - Computador, TV Box ou navegador de TV para abrir a tela do jogo.
 - Celular com navegador moderno e câmera frontal.
 - Os dois dispositivos devem acessar o mesmo servidor.
@@ -23,6 +23,7 @@ Primeiro protótipo jogável de uma plataforma infantil de minijogos corporais.
 ## Rodar localmente
 
 ```bash
+npm install
 npm start
 ```
 
@@ -39,6 +40,10 @@ https://SEU-ENDERECO/celular
 ```
 
 Digite o código mostrado na TV e permita o uso da câmera.
+
+## Publicação no Render
+
+O repositório inclui `render.yaml`. Ao conectar o projeto ao Render, o serviço executará `npm install` e `npm start` automaticamente.
 
 ## Teste recomendado
 
