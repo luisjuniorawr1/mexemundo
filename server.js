@@ -44,7 +44,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.6.2',
+      version: '0.7.0',
+      games: ['balloons', 'goalkeeper'],
       transport: 'webrtc-dual-channel-adaptive'
     }));
     return;
@@ -53,6 +54,7 @@ const server = http.createServer((req, res) => {
   const routeFiles = {
     '/': 'index.html',
     '/tv': 'tv.html',
+    '/goleiro': 'goalkeeper.html',
     '/celular': 'phone.html'
   };
 
