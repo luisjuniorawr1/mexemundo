@@ -1,0 +1,77 @@
+name: Ajustar limites verticais dos balões
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/adjust-balloon-vertical-bounds.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  adjust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Liberar topo e base
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('public/js/tv.js')
+          text = path.read_text()
+
+          replacements = [
+              ("const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88, top: 0.10, bottom: 0.86 });",
+               "const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88 });"),
+              ("function getPlayBounds(width, height, radius = 0) {\n  return {\n    left: width * PLAY_AREA.left + radius,\n    right: width * PLAY_AREA.right - radius,\n    top: height * PLAY_AREA.top + radius,\n    bottom: height * PLAY_AREA.bottom - radius\n  };\n}",
+               "function getPlayBounds(width, radius = 0) {\n  return {\n    left: width * PLAY_AREA.left + radius,\n    right: width * PLAY_AREA.right - radius\n  };\n}"),
+              ("const bounds = getPlayBounds(width, height, finalRadius);",
+               "const bounds = getPlayBounds(width, finalRadius);"),
+              ("y: bounds.bottom,",
+               "y: height + finalRadius * 1.5,"),
+              ("const bounds = getPlayBounds(width, height, balloon.radius);",
+               "const bounds = getPlayBounds(width, balloon.radius);"),
+              ("if (balloon.y <= height * PLAY_AREA.top + balloon.radius) {",
+               "if (balloon.y + balloon.radius < -20) {")
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'Trecho esperado não encontrado: {old[:80]}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+          package = Path('package.json')
+          package_text = package.read_text().replace('"version": "0.6.1"', '"version": "0.6.2"', 1)
+          package.write_text(package_text)
+
+          server = Path('server.js')
+          server_text = server.read_text()
+          server_text = re.sub(r"version: '0\.6\.[0-9]+'", "version: '0.6.2'", server_text, count=1)
+          server.write_text(server_text)
+          PY
+
+      - name: Validar sintaxe
+        run: npm run check
+
+      - name: Remover workflow temporário
+        run: rm .github/workflows/adjust-balloon-vertical-bounds.yml
+
+      - name: Publicar ajuste
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/js/tv.js package.json server.js .github/workflows/adjust-balloon-vertical-bounds.yml
+          git commit -m "Libera topo e base no jogo de balões"
+          git push
