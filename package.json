@@ -13,6 +13,6 @@
   },
   "description": "Protótipo de minijogos infantis controlados por movimentos usando o celular como sensor corporal.",
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.21.1"
   }
 }
