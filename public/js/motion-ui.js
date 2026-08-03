@@ -1,5 +1,5 @@
 const ROOM_KEY = 'mexemundo-room-v1';
-const PROFILE_KEY = 'mexemundo-motion-profile-v2';
+const PROFILE_KEY = 'mexemundo-motion-profile-v3';
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -15,6 +15,25 @@ function cleanRoom(value) {
 function average(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function percentile(values, amount) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = clamp(amount) * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  const blend = position - lower;
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * blend;
 }
 
 function standardDeviation(values, mean = average(values)) {
@@ -35,6 +54,14 @@ function viewportSize() {
     width: Math.max(1, document.documentElement.clientWidth || innerWidth),
     height: Math.max(1, document.documentElement.clientHeight || innerHeight)
   };
+}
+
+function validHandProfile(hand) {
+  return hand
+    && Number.isFinite(hand.centerX)
+    && Number.isFinite(hand.centerY)
+    && Number.isFinite(hand.deadZone)
+    && Number.isFinite(hand.jitter);
 }
 
 export function getPersistentRoom() {
@@ -58,13 +85,13 @@ export function getMotionProfile() {
     if (!raw) return null;
     const profile = JSON.parse(raw);
     if (
-      profile.version !== 2
-      || profile.coordinateMode !== 'shoulder-relative'
-      || !Number.isFinite(profile.centerX)
-      || !Number.isFinite(profile.centerY)
+      profile.version !== 3
+      || profile.coordinateMode !== 'dual-hand-shoulder-relative'
       || !Number.isFinite(profile.scaleX)
       || !Number.isFinite(profile.scaleY)
       || !Number.isFinite(profile.deadZone)
+      || !validHandProfile(profile.hands?.left)
+      || !validHandProfile(profile.hands?.right)
     ) return null;
     return profile;
   } catch {
@@ -81,51 +108,78 @@ export function clearMotionProfile() {
   sessionStorage.removeItem(PROFILE_KEY);
 }
 
-export function buildMotionProfile(samples) {
-  const valid = samples.filter((sample) => (
-    sample?.right?.visible
-    && sample?.leftShoulder?.visible
-    && sample?.rightShoulder?.visible
+function buildHandProfile(relativePoints) {
+  const xs = relativePoints.map((point) => point.x);
+  const ys = relativePoints.map((point) => point.y);
+  const centerX = median(xs);
+  const centerY = median(ys);
+  const distances = relativePoints.map((point) => Math.hypot(
+    point.x - centerX,
+    point.y - centerY
   ));
-
-  if (valid.length < 20) {
-    throw new Error('Não houve amostras suficientes para calibrar.');
-  }
-
-  const relative = valid.map((sample) => {
-    const shoulders = shoulderCenter(sample);
-    return {
-      x: sample.right.x - shoulders.x,
-      y: sample.right.y - shoulders.y
-    };
-  });
-  const xs = relative.map((point) => point.x);
-  const ys = relative.map((point) => point.y);
-  const widths = valid.map((sample) => Math.abs(sample.leftShoulder.x - sample.rightShoulder.x));
-  const centerX = average(xs);
-  const centerY = average(ys);
-  const shoulderWidth = clamp(average(widths), 0.08, 0.35);
   const jitter = Math.hypot(
     standardDeviation(xs, centerX),
     standardDeviation(ys, centerY)
   );
+  const restRadius = Math.max(jitter * 4.2, percentile(distances, 0.90) * 1.65);
 
-  return saveMotionProfile({
-    version: 2,
-    coordinateMode: 'shoulder-relative',
+  return {
     centerX,
     centerY,
-    scaleX: clamp(shoulderWidth * 2.85, 0.30, 0.76),
-    scaleY: clamp(shoulderWidth * 2.70, 0.30, 0.74),
-    deadZone: clamp(jitter * 3.8, 0.0055, 0.022),
     jitter,
+    deadZone: clamp(restRadius, 0.0065, 0.028)
+  };
+}
+
+export function buildMotionProfile(samples) {
+  const valid = samples.filter((sample) => (
+    sample?.left?.visible
+    && sample?.right?.visible
+    && sample?.leftShoulder?.visible
+    && sample?.rightShoulder?.visible
+  ));
+
+  if (valid.length < 60) {
+    throw new Error('Não houve amostras suficientes para calibrar as duas mãos.');
+  }
+
+  const leftPoints = [];
+  const rightPoints = [];
+  const widths = [];
+
+  for (const sample of valid) {
+    const shoulders = shoulderCenter(sample);
+    leftPoints.push({
+      x: sample.left.x - shoulders.x,
+      y: sample.left.y - shoulders.y
+    });
+    rightPoints.push({
+      x: sample.right.x - shoulders.x,
+      y: sample.right.y - shoulders.y
+    });
+    widths.push(Math.abs(sample.leftShoulder.x - sample.rightShoulder.x));
+  }
+
+  const left = buildHandProfile(leftPoints);
+  const right = buildHandProfile(rightPoints);
+  const shoulderWidth = clamp(median(widths), 0.08, 0.35);
+
+  return saveMotionProfile({
+    version: 3,
+    coordinateMode: 'dual-hand-shoulder-relative',
+    hands: { left, right },
+    scaleX: clamp(shoulderWidth * 3.0, 0.32, 0.80),
+    scaleY: clamp(shoulderWidth * 2.9, 0.32, 0.78),
+    deadZone: Math.max(left.deadZone, right.deadZone),
+    jitter: Math.max(left.jitter, right.jitter),
+    shoulderWidth,
     createdAt: Date.now()
   });
 }
 
 export function calibratedDeadZone(fallback = 0.004) {
   const profile = getMotionProfile();
-  return profile ? clamp(profile.deadZone, fallback, 0.022) : fallback;
+  return profile ? clamp(profile.deadZone, fallback, 0.028) : fallback;
 }
 
 export class MotionCursor {
@@ -145,6 +199,8 @@ export class MotionCursor {
     this.profile = getMotionProfile();
     this.x = 0.5;
     this.y = 0.5;
+    this.bodyX = null;
+    this.bodyY = null;
     this.lastUpdateAt = 0;
     this.lastValidAt = 0;
     this.previousMapped = null;
@@ -162,6 +218,8 @@ export class MotionCursor {
     this.profile = profile;
     this.x = 0.5;
     this.y = 0.5;
+    this.bodyX = null;
+    this.bodyY = null;
     this.lastUpdateAt = 0;
     this.lastValidAt = 0;
     this.previousMapped = null;
@@ -193,19 +251,31 @@ export class MotionCursor {
 
   mapPose(pose) {
     const profile = this.profile ?? getMotionProfile();
+    const rightProfile = profile?.hands?.right;
     if (
       !profile
+      || !rightProfile
       || !pose?.right?.visible
       || !pose?.leftShoulder?.visible
       || !pose?.rightShoulder?.visible
     ) return null;
 
     const shoulders = shoulderCenter(pose);
-    const relativeX = pose.right.x - shoulders.x;
-    const relativeY = pose.right.y - shoulders.y;
+    if (this.bodyX === null || this.bodyY === null) {
+      this.bodyX = shoulders.x;
+      this.bodyY = shoulders.y;
+    } else {
+      const bodyDistance = Math.hypot(shoulders.x - this.bodyX, shoulders.y - this.bodyY);
+      const bodyAlpha = bodyDistance > 0.045 ? 0.32 : bodyDistance > 0.012 ? 0.16 : 0.055;
+      this.bodyX += (shoulders.x - this.bodyX) * bodyAlpha;
+      this.bodyY += (shoulders.y - this.bodyY) * bodyAlpha;
+    }
+
+    const relativeX = pose.right.x - this.bodyX;
+    const relativeY = pose.right.y - this.bodyY;
     return {
-      x: clamp(0.5 + (relativeX - profile.centerX) / profile.scaleX, 0.025, 0.975),
-      y: clamp(0.5 + (relativeY - profile.centerY) / profile.scaleY, 0.035, 0.965)
+      x: clamp(0.5 + (relativeX - rightProfile.centerX) / profile.scaleX, 0.025, 0.975),
+      y: clamp(0.5 + (relativeY - rightProfile.centerY) / profile.scaleY, 0.035, 0.965)
     };
   }
 
@@ -217,7 +287,7 @@ export class MotionCursor {
 
     const mapped = pose?.detected ? this.mapPose(pose) : null;
     if (!mapped) {
-      if (this.visible && now - this.lastValidAt <= 180) {
+      if (this.visible && now - this.lastValidAt <= 260) {
         this.updateHover(now);
         return;
       }
@@ -236,13 +306,13 @@ export class MotionCursor {
       const absY = Math.abs(stepY);
       const stepSpeed = Math.hypot(stepX, stepY) / dt;
 
-      if (stepSpeed > 0.16) {
-        if (absX > absY * 2.15) {
+      if (stepSpeed > 0.14) {
+        if (absX > absY * 1.9) {
           this.axisLock = 'x';
-          this.axisLockUntil = now + 115;
-        } else if (absY > absX * 2.15) {
+          this.axisLockUntil = now + 150;
+        } else if (absY > absX * 1.9) {
           this.axisLock = 'y';
-          this.axisLockUntil = now + 115;
+          this.axisLockUntil = now + 150;
         } else if (now >= this.axisLockUntil) {
           this.axisLock = null;
         }
@@ -254,17 +324,17 @@ export class MotionCursor {
 
     let dx = mapped.x - this.x;
     let dy = mapped.y - this.y;
-    if (this.axisLock === 'x' && now < this.axisLockUntil) dy *= 0.16;
-    if (this.axisLock === 'y' && now < this.axisLockUntil) dx *= 0.16;
+    if (this.axisLock === 'x' && now < this.axisLockUntil) dy *= 0.08;
+    if (this.axisLock === 'y' && now < this.axisLockUntil) dx *= 0.08;
 
     const distance = Math.hypot(dx, dy);
-    const profileDeadZone = this.profile?.deadZone ?? 0.006;
+    const rightDeadZone = this.profile?.hands?.right?.deadZone ?? 0.008;
     const profileScale = Math.max(0.20, Math.min(this.profile?.scaleX ?? 0.5, this.profile?.scaleY ?? 0.5));
-    const screenDeadZone = clamp(profileDeadZone / profileScale, 0.008, 0.035);
+    const screenDeadZone = clamp(rightDeadZone / profileScale, 0.012, 0.050);
 
     if (distance > screenDeadZone) {
       const speed = distance / dt;
-      const alpha = clamp(0.34 + speed * 0.16, 0.34, 0.96);
+      const alpha = clamp(0.30 + speed * 0.15, 0.30, 0.94);
       this.x += dx * alpha;
       this.y += dy * alpha;
     }
@@ -280,7 +350,7 @@ export class MotionCursor {
     this.element.style.transform = `translate3d(${this.x * viewport.width}px, ${this.y * viewport.height}px, 0) translate(-50%, -50%)`;
   }
 
-  pointInsideTarget(target, x, y, margin = 38) {
+  pointInsideTarget(target, x, y, margin = 52) {
     if (!target?.isConnected) return false;
     const rect = target.getBoundingClientRect();
     return x >= rect.left - margin
