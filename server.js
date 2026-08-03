@@ -42,7 +42,7 @@ const server = http.createServer((req, res) => {
 
   if (requestUrl.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, version: '0.4.0', transport: 'webrtc-with-websocket-fallback' }));
+    res.end(JSON.stringify({ ok: true, version: '0.5.0', transport: 'webrtc-binary-super-turbo' }));
     return;
   }
 
@@ -76,12 +76,10 @@ function roomStatus(room) {
   const members = rooms.get(room) ?? new Set();
   let tv = false;
   let phone = false;
-
   for (const client of members) {
     if (client.role === 'tv') tv = true;
     if (client.role === 'phone') phone = true;
   }
-
   return { tv, phone };
 }
 
@@ -93,10 +91,9 @@ function sendJson(client, message) {
 function broadcast(room, message, except = null) {
   const members = rooms.get(room);
   if (!members) return;
-
-  const encoded = JSON.stringify(message);
+  const serialized = JSON.stringify(message);
   for (const client of members) {
-    if (client !== except && client.readyState === WebSocket.OPEN) client.send(encoded);
+    if (client !== except && client.readyState === WebSocket.OPEN) client.send(serialized);
   }
 }
 
@@ -107,14 +104,12 @@ function broadcastRoomStatus(room) {
 
 function removeFromRoom(client) {
   if (!client.room) return;
-
   const oldRoom = client.room;
   const members = rooms.get(oldRoom);
   if (members) {
     members.delete(client);
     if (members.size === 0) rooms.delete(oldRoom);
   }
-
   client.room = '';
   client.role = '';
   broadcastRoomStatus(oldRoom);
@@ -124,7 +119,6 @@ function addToRoom(client, room, role) {
   removeFromRoom(client);
   client.room = room;
   client.role = role;
-
   const members = rooms.get(room) ?? new Set();
   members.add(client);
   rooms.set(room, members);
@@ -144,7 +138,6 @@ function handleMessage(client, rawMessage) {
   if (type === 'join') {
     const room = cleanRoom(payload.room);
     const role = payload.role;
-
     if (room.length < 4 || !['tv', 'phone'].includes(role)) {
       sendJson(client, {
         type: 'response',
