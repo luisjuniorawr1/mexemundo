@@ -44,8 +44,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.8.4',
+      version: '0.9.0',
       games: ['balloons', 'goalkeeper'],
+      laboratory: 'pose-vs-hand-landmarker',
       interaction: 'dual-hand-calibrated-cursor',
       session: 'seamless-role-handoff',
       transport: 'webrtc-dual-channel-adaptive'
@@ -57,7 +58,8 @@ const server = http.createServer((req, res) => {
     '/': 'index.html',
     '/tv': 'tv.html',
     '/goleiro': 'goalkeeper.html',
-    '/celular': 'phone.html'
+    '/celular': 'phone.html',
+    '/laboratorio-maos': 'hand-lab.html'
   };
 
   const routeFile = routeFiles[requestUrl.pathname];
