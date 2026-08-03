@@ -7,15 +7,24 @@ const POSE_MAGIC = 0x4d;
 const POSE_VERSION = 1;
 const POSE_POINTS = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const POSE_PACKET_BYTES = 8 + POSE_POINTS.length * 8;
+const UINT16_RANGE = 0x10000;
+const UINT16_HALF_RANGE = 0x8000;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isNewerSequence(next, previous) {
+  if (previous === null) return true;
+  const difference = (next - previous + UINT16_RANGE) % UINT16_RANGE;
+  return difference > 0 && difference < UINT16_HALF_RANGE;
 }
 
 function encodePose(payload) {
   const buffer = new ArrayBuffer(POSE_PACKET_BYTES);
   const view = new DataView(buffer);
   let flags = payload.detected ? 1 : 0;
+
   POSE_POINTS.forEach((name, index) => {
     if (payload[name]?.visible) flags |= 1 << (index + 1);
   });
@@ -37,11 +46,13 @@ function encodePose(payload) {
     view.setInt16(offset + 6, clamp(Math.round((point.vy ?? 0) * 8191), -32767, 32767), true);
     offset += 8;
   }
+
   return buffer;
 }
 
 function decodePose(buffer) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== POSE_PACKET_BYTES) return null;
+
   const view = new DataView(buffer);
   if (view.getUint8(0) !== POSE_MAGIC || view.getUint8(1) !== POSE_VERSION) return null;
 
@@ -64,6 +75,7 @@ function decodePose(buffer) {
     };
     offset += 8;
   });
+
   return payload;
 }
 
@@ -73,29 +85,43 @@ export class RealtimeClient {
     this.handlers = new Map();
     this.pending = new Map();
     this.sequence = 0;
+
     this.room = '';
     this.role = '';
     this.roomStatus = { tv: false, phone: false };
+
     this.peer = null;
-    this.channel = null;
+    this.poseChannel = null;
+    this.reliableChannel = null;
     this.pendingCandidates = [];
+    this.pendingPosePacket = null;
     this.peerStarting = false;
     this.retryTimer = null;
+
     this.transportMode = 'relay';
     this.directRtt = 0;
+    this.lastPoseSequence = null;
+    this.lastPoseAt = 0;
+    this.poseIntervalMs = 0;
+    this.poseReceived = 0;
+    this.poseDropped = 0;
+    this.lastQualityDispatchAt = 0;
   }
 
   async connect() {
     if (this.socket?.readyState === WebSocket.OPEN) return;
+
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.socket = new WebSocket(`${protocol}//${location.host}/ws`);
 
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Tempo esgotado ao conectar ao servidor.')), 7000);
+
       this.socket.addEventListener('open', () => {
         clearTimeout(timeout);
         resolve();
       }, { once: true });
+
       this.socket.addEventListener('error', () => {
         clearTimeout(timeout);
         reject(new Error('Não foi possível conectar ao servidor.'));
@@ -124,6 +150,7 @@ export class RealtimeClient {
           this.startDirectConnection().catch(() => this.fallbackToRelay());
         }
       }
+
       this.handleIncoming(message);
     });
 
@@ -138,6 +165,57 @@ export class RealtimeClient {
     });
   }
 
+  resetPoseStream() {
+    this.lastPoseSequence = null;
+    this.lastPoseAt = 0;
+    this.poseIntervalMs = 0;
+    this.poseReceived = 0;
+    this.poseDropped = 0;
+    this.lastQualityDispatchAt = 0;
+  }
+
+  acceptPose(payload) {
+    const sequence = Number(payload?.sequence);
+    if (Number.isFinite(sequence)) {
+      const normalizedSequence = sequence & 0xffff;
+      if (!isNewerSequence(normalizedSequence, this.lastPoseSequence)) {
+        this.poseDropped += 1;
+        this.dispatchQuality();
+        return;
+      }
+      this.lastPoseSequence = normalizedSequence;
+    }
+
+    const now = performance.now();
+    if (this.lastPoseAt) {
+      const interval = now - this.lastPoseAt;
+      this.poseIntervalMs = this.poseIntervalMs
+        ? this.poseIntervalMs * 0.82 + interval * 0.18
+        : interval;
+    }
+
+    this.lastPoseAt = now;
+    this.poseReceived += 1;
+    this.dispatch('pose', payload);
+    this.dispatchQuality(now);
+  }
+
+  dispatchQuality(now = performance.now()) {
+    if (now - this.lastQualityDispatchAt < 750) return;
+    this.lastQualityDispatchAt = now;
+
+    const total = this.poseReceived + this.poseDropped;
+    this.dispatch('quality', {
+      mode: this.transportMode,
+      rtt: this.directRtt,
+      packetIntervalMs: Math.round(this.poseIntervalMs || 0),
+      received: this.poseReceived,
+      dropped: this.poseDropped,
+      dropRate: total ? this.poseDropped / total : 0,
+      bufferedAmount: this.poseChannel?.bufferedAmount ?? 0
+    });
+  }
+
   handleIncoming(message) {
     if (message.replyTo && this.pending.has(message.replyTo)) {
       const pending = this.pending.get(message.replyTo);
@@ -146,6 +224,12 @@ export class RealtimeClient {
       pending.resolve(message.payload);
       return;
     }
+
+    if (message.type === 'pose') {
+      this.acceptPose(message.payload);
+      return;
+    }
+
     this.dispatch(message.type, message.payload);
   }
 
@@ -161,13 +245,34 @@ export class RealtimeClient {
   }
 
   emit(type, payload = {}) {
-    if (type === 'pose' && this.channel?.readyState === 'open') {
-      if (this.channel.bufferedAmount > 128) return true;
+    if (type === 'pose' && this.poseChannel?.readyState === 'open') {
+      const packet = encodePose(payload);
+
+      // Canal sempre trabalha com o quadro mais recente. Se houver algo no
+      // buffer, substitui a pose pendente em vez de criar uma fila atrasada.
+      if (this.poseChannel.bufferedAmount > 0) {
+        this.pendingPosePacket = packet;
+        return true;
+      }
+
       try {
-        this.channel.send(encodePose(payload));
+        this.poseChannel.send(packet);
         return true;
       } catch {
         this.fallbackToRelay();
+      }
+    }
+
+    return this.emitReliable(type, payload);
+  }
+
+  emitReliable(type, payload = {}) {
+    if (this.reliableChannel?.readyState === 'open') {
+      try {
+        this.reliableChannel.send(JSON.stringify({ type, payload }));
+        return true;
+      } catch {
+        // Usa o WebSocket como fallback confiável.
       }
     }
 
@@ -177,19 +282,22 @@ export class RealtimeClient {
   }
 
   async request(type, payload = {}, timeoutMs = 5000) {
-    if (type === 'ping-latency' && this.channel?.readyState === 'open') {
+    if (type === 'ping-latency' && this.poseChannel?.readyState === 'open') {
       try {
         return await this.directRequest(type, payload, Math.min(timeoutMs, 700));
       } catch {
-        // O canal direto é não confiável de propósito; mede pelo servidor quando o ping cair.
+        // O canal de movimento é não confiável de propósito.
       }
     }
 
-    if (this.socket?.readyState !== WebSocket.OPEN) throw new Error('Servidor desconectado.');
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      throw new Error('Servidor desconectado.');
+    }
 
     if (type === 'join') {
       this.room = String(payload.room ?? '').toUpperCase();
       this.role = payload.role ?? '';
+      this.resetPoseStream();
     }
 
     const id = `${Date.now().toString(36)}-${(++this.sequence).toString(36)}`;
@@ -198,6 +306,7 @@ export class RealtimeClient {
         this.pending.delete(id);
         reject(new Error('O servidor não respondeu.'));
       }, timeoutMs);
+
       this.pending.set(id, { resolve, reject, timeout });
       this.socket.send(JSON.stringify({ type, payload, id }));
     }).then((response) => {
@@ -207,13 +316,16 @@ export class RealtimeClient {
           this.role = '';
           return response;
         }
+
         this.room = response.room;
         this.role = payload.role;
         this.roomStatus = response.status ?? this.roomStatus;
+
         if (this.role === 'tv' && this.roomStatus.phone) {
           queueMicrotask(() => this.startDirectConnection().catch(() => this.fallbackToRelay()));
         }
       }
+
       return response;
     });
   }
@@ -221,11 +333,13 @@ export class RealtimeClient {
   directRequest(requestType, payload, timeoutMs) {
     const id = `d-${Date.now().toString(36)}-${(++this.sequence).toString(36)}`;
     const startedAt = performance.now();
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('Canal direto não respondeu.'));
       }, timeoutMs);
+
       this.pending.set(id, {
         timeout,
         reject,
@@ -235,8 +349,9 @@ export class RealtimeClient {
           resolve(response);
         }
       });
+
       try {
-        this.channel.send(JSON.stringify({ type: 'direct-request', requestType, payload, id }));
+        this.poseChannel.send(JSON.stringify({ type: 'direct-request', requestType, payload, id }));
       } catch (error) {
         clearTimeout(timeout);
         this.pending.delete(id);
@@ -252,6 +367,7 @@ export class RealtimeClient {
 
   createPeer() {
     this.closePeer(false);
+
     const peer = new RTCPeerConnection(RTC_CONFIG);
     this.peer = peer;
     this.pendingCandidates = [];
@@ -259,7 +375,11 @@ export class RealtimeClient {
     peer.addEventListener('icecandidate', ({ candidate }) => {
       if (candidate) this.sendSignal({ candidate });
     });
-    peer.addEventListener('datachannel', ({ channel }) => this.attachChannel(channel));
+
+    peer.addEventListener('datachannel', ({ channel }) => {
+      this.attachChannel(channel);
+    });
+
     peer.addEventListener('connectionstatechange', () => {
       const state = peer.connectionState;
       if (state === 'failed' || state === 'closed') {
@@ -269,27 +389,53 @@ export class RealtimeClient {
         this.scheduleRetry(900);
       }
     });
+
     return peer;
   }
 
   attachChannel(channel) {
-    this.channel = channel;
+    if (channel.label === 'mexemundo-events') {
+      this.attachReliableChannel(channel);
+      return;
+    }
+
+    this.attachPoseChannel(channel);
+  }
+
+  attachPoseChannel(channel) {
+    this.poseChannel = channel;
     channel.binaryType = 'arraybuffer';
-    channel.bufferedAmountLowThreshold = 64;
+    channel.bufferedAmountLowThreshold = 1;
 
     channel.addEventListener('open', () => {
       this.transportMode = 'direct';
+      this.pendingPosePacket = null;
+      this.resetPoseStream();
       this.dispatch('transport', { mode: 'direct', rtt: this.directRtt });
     });
+
+    channel.addEventListener('bufferedamountlow', () => {
+      if (!this.pendingPosePacket || channel.readyState !== 'open') return;
+      const packet = this.pendingPosePacket;
+      this.pendingPosePacket = null;
+      try {
+        channel.send(packet);
+      } catch {
+        this.fallbackToRelay();
+      }
+    });
+
     channel.addEventListener('close', () => {
       this.fallbackToRelay();
       this.scheduleRetry();
     });
+
     channel.addEventListener('error', () => this.fallbackToRelay());
+
     channel.addEventListener('message', (event) => {
       if (event.data instanceof ArrayBuffer) {
         const pose = decodePose(event.data);
-        if (pose) this.dispatch('pose', pose);
+        if (pose) this.acceptPose(pose);
         return;
       }
 
@@ -310,21 +456,57 @@ export class RealtimeClient {
         }
         return;
       }
+
       this.handleIncoming(message);
+    });
+  }
+
+  attachReliableChannel(channel) {
+    this.reliableChannel = channel;
+
+    channel.addEventListener('open', () => {
+      this.dispatch('reliable-ready', { mode: 'direct' });
+    });
+
+    channel.addEventListener('message', (event) => {
+      if (typeof event.data !== 'string') return;
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      this.handleIncoming(message);
+    });
+
+    channel.addEventListener('error', () => {
+      this.reliableChannel = null;
+    });
+
+    channel.addEventListener('close', () => {
+      if (this.reliableChannel === channel) this.reliableChannel = null;
     });
   }
 
   async startDirectConnection() {
     if (this.role !== 'tv' || !this.roomStatus.phone) return;
-    if (this.channel?.readyState === 'open' || this.peerStarting) return;
+    if (this.poseChannel?.readyState === 'open' || this.peerStarting) return;
+
     this.peerStarting = true;
     try {
       const peer = this.createPeer();
-      const channel = peer.createDataChannel('mexemundo-pose', {
+
+      const poseChannel = peer.createDataChannel('mexemundo-pose', {
         ordered: false,
         maxRetransmits: 0
       });
-      this.attachChannel(channel);
+      this.attachPoseChannel(poseChannel);
+
+      const reliableChannel = peer.createDataChannel('mexemundo-events', {
+        ordered: true
+      });
+      this.attachReliableChannel(reliableChannel);
+
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       this.sendSignal({ description: peer.localDescription });
@@ -335,18 +517,22 @@ export class RealtimeClient {
 
   async handleSignal(signal) {
     if (!this.room || !signal) return;
+
     if (signal.description) {
       const description = signal.description;
       let peer = this.peer;
+
       if (description.type === 'offer') {
         peer = this.createPeer();
         await peer.setRemoteDescription(description);
         await this.flushCandidates();
+
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         this.sendSignal({ description: peer.localDescription });
         return;
       }
+
       if (description.type === 'answer' && peer) {
         await peer.setRemoteDescription(description);
         await this.flushCandidates();
@@ -355,13 +541,17 @@ export class RealtimeClient {
     }
 
     if (signal.candidate) {
-      if (this.peer?.remoteDescription) await this.peer.addIceCandidate(signal.candidate);
-      else this.pendingCandidates.push(signal.candidate);
+      if (this.peer?.remoteDescription) {
+        await this.peer.addIceCandidate(signal.candidate);
+      } else {
+        this.pendingCandidates.push(signal.candidate);
+      }
     }
   }
 
   async flushCandidates() {
     if (!this.peer?.remoteDescription || this.pendingCandidates.length === 0) return;
+
     const candidates = this.pendingCandidates.splice(0);
     for (const candidate of candidates) {
       try {
@@ -381,6 +571,7 @@ export class RealtimeClient {
 
   scheduleRetry(delay = 1400) {
     if (this.role !== 'tv' || !this.roomStatus.phone || this.retryTimer) return;
+
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       this.startDirectConnection().catch(() => this.fallbackToRelay());
@@ -390,12 +581,19 @@ export class RealtimeClient {
   closePeer(resetTransport = true) {
     clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    try { this.channel?.close(); } catch {}
+
+    try { this.poseChannel?.close(); } catch {}
+    try { this.reliableChannel?.close(); } catch {}
     try { this.peer?.close(); } catch {}
-    this.channel = null;
+
+    this.poseChannel = null;
+    this.reliableChannel = null;
     this.peer = null;
     this.pendingCandidates = [];
+    this.pendingPosePacket = null;
     this.peerStarting = false;
+    this.resetPoseStream();
+
     if (resetTransport) this.fallbackToRelay();
   }
 }
