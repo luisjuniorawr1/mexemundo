@@ -62,6 +62,8 @@ export class RealtimeClient {
 
   emit(type, payload = {}) {
     if (this.socket?.readyState !== WebSocket.OPEN) return false;
+    // Não acumula poses antigas: movimento atrasado é pior do que perder um quadro.
+    if (type === 'pose' && this.socket.bufferedAmount > 16_384) return false;
     this.socket.send(JSON.stringify({ type, payload }));
     return true;
   }
