@@ -1,11 +1,11 @@
-import { FilesetResolver, HandLandmarker, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm';
+import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm';
+import { HandTrackingCore } from './hand-tracking-core.js';
 
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm';
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
-const PALM = [0, 5, 9, 13, 17];
-const MEASURE_MS = 5000;
-const HISTORY_MS = 2000;
+const PROFILE_KEY = 'mexemundo-hand-calibration-v1';
+const TARGET_RADIUS = 0.13;
+const ALIGN_HOLD_MS = 1800;
 
 const $ = (selector) => document.querySelector(selector);
 const video = $('#camera');
@@ -14,62 +14,390 @@ const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
 const stage = $('#cameraStage');
 const startPanel = $('#startPanel');
 const startButton = $('#startButton');
-const clearButton = $('#clearButton');
-const measureButton = $('#measureButton');
-const modeSelect = $('#scheduleMode');
+const calibrateButton = $('#calibrateButton');
+const resetButton = $('#resetButton');
+const copyButton = $('#copyButton');
+const guideLayer = $('#guideLayer');
+const guideStep = $('#guideStep');
+const guideTitle = $('#guideTitle');
+const guideText = $('#guideText');
+const guideProgress = $('#guideProgress');
+const targetElements = [$('#targetLeft'), $('#targetRight')];
 const statusText = $('#statusText');
 const statusDetail = $('#statusDetail');
+const profileBadge = $('#profileBadge');
+const calibrationInstruction = $('#calibrationInstruction');
+const calibrationProgress = $('#calibrationProgress');
+const phaseElements = [...document.querySelectorAll('[data-phase]')];
 const cameraRate = $('#cameraRate');
 const resolutionValue = $('#resolutionValue');
 const handRate = $('#handRate');
 const handTime = $('#handTime');
-const poseRate = $('#poseRate');
-const poseTime = $('#poseTime');
-const combinedTime = $('#combinedTime');
-const liveFields = {
-  hand: [$('#liveHandLeft'), $('#liveHandRight')],
-  stable: [$('#liveStableLeft'), $('#liveStableRight')],
-  pose: [$('#livePoseLeft'), $('#livePoseRight')]
-};
-const measureInstruction = $('#measureInstruction');
-const measureProgress = $('#measureProgress');
-const measureFields = {
-  hand: $('#measureHandResult'),
-  stable: $('#measureStableResult'),
-  pose: $('#measurePoseResult')
-};
+const visibleHands = $('#visibleHands');
+const activeProfile = $('#activeProfile');
+const profileDate = $('#profileDate');
+const resultPanel = $('#resultPanel');
+const resultTitle = $('#resultTitle');
+const scoreBadge = $('#scoreBadge');
+const stabilityResult = $('#stabilityResult');
+const accuracyResult = $('#accuracyResult');
+const continuityResult = $('#continuityResult');
+const performanceResult = $('#performanceResult');
+const resultMessage = $('#resultMessage');
+const resultCode = $('#resultCode');
+
+const PHASES = [
+  { id: 'align', title: 'Posicione as mãos', text: 'Coloque uma mão em cada círculo e mantenha.', duration: ALIGN_HOLD_MS },
+  { id: 'steady', title: 'Fique parado', text: 'Agora não mova as mãos. Vamos medir o tremor real.', duration: 3500 },
+  { id: 'horizontal', title: 'Siga para os lados', text: 'Acompanhe os círculos sem subir ou descer.', duration: 5000 },
+  { id: 'vertical', title: 'Siga para cima e para baixo', text: 'Acompanhe os círculos mantendo cada mão do seu lado.', duration: 5000 },
+  { id: 'corners', title: 'Alcance os cantos', text: 'Siga os círculos até completar a volta.', duration: 6000 }
+];
 
 let handTask;
-let poseTask;
 let running = false;
 let lastMediaTime = -1;
-let frame = 0;
-let rawHands = [null, null];
-let stableHands = [null, null];
-let poseWrists = [null, null];
-let latestHandLandmarks = [];
+let latestSnapshot = null;
+let latestTargets = [{ x: 0.30, y: 0.58 }, { x: 0.70, y: 0.58 }];
+let core = new HandTrackingCore({ mirrorX: true });
+let loadedProfile = loadProfile();
+let counters = resetCounters();
 let rateStartedAt = performance.now();
-let counters = { camera: 0, hand: 0, pose: 0, handMs: 0, poseMs: 0 };
-let lastDurations = { hand: 0, pose: 0 };
+let measuredRate = 0;
+let measuredInferenceMs = 0;
 
-const history = {
-  hand: [[], []],
-  stable: [[], []],
-  pose: [[], []]
-};
-
-const measurement = {
-  waiting: false,
+const session = {
   active: false,
-  startedAt: 0,
-  samples: { hand: [[], []], stable: [[], []], pose: [[], []] }
+  phaseIndex: -1,
+  phaseElapsed: 0,
+  holdElapsed: 0,
+  lastUpdateAt: 0,
+  totalFrames: 0,
+  visibleFrames: 0,
+  samples: createSampleStore()
 };
 
-const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
-const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-const validPair = (pair) => Boolean(pair[0] && pair[1]);
+function clamp(value, min = 0, max = 1) {
+  return Math.max(min, Math.min(max, value));
+}
 
-function coverTransform() {
+function mean(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function distance(a, b) {
+  return Math.hypot((a?.x ?? 0) - (b?.x ?? 0), (a?.y ?? 0) - (b?.y ?? 0));
+}
+
+function rms(points) {
+  if (points.length < 8) return 0;
+  const centerX = mean(points.map((point) => point.x));
+  const centerY = mean(points.map((point) => point.y));
+  return Math.sqrt(mean(points.map((point) => (
+    (point.x - centerX) ** 2 + (point.y - centerY) ** 2
+  ))));
+}
+
+function resetCounters() {
+  return { camera: 0, hand: 0, handMs: 0 };
+}
+
+function createSampleStore() {
+  return {
+    steadyRaw: [[], []],
+    steadyVisual: [[], []],
+    scale: [[], []],
+    movementError: [[], []],
+    crossAxisError: [[], []]
+  };
+}
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (!raw) return null;
+    const profile = JSON.parse(raw);
+    return profile?.version === 1 ? profile : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveProfile(profile) {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  loadedProfile = profile;
+}
+
+function applyLoadedProfile() {
+  if (!loadedProfile) return;
+  core.applyCalibration?.(loadedProfile);
+}
+
+function refreshProfileUi() {
+  if (!loadedProfile) {
+    profileBadge.textContent = 'Sem perfil';
+    activeProfile.textContent = 'Padrão';
+    profileDate.textContent = 'ainda não calibrado';
+    return;
+  }
+  profileBadge.textContent = `Perfil ${loadedProfile.score}/100`;
+  activeProfile.textContent = loadedProfile.tier;
+  profileDate.textContent = new Date(loadedProfile.createdAt).toLocaleDateString('pt-BR');
+}
+
+function orderedVisibleHands() {
+  const hands = latestSnapshot?.hands?.filter((hand) => hand.visible && hand.visual) ?? [];
+  return hands.sort((a, b) => a.visual.x - b.visual.x).slice(0, 2);
+}
+
+function phaseTargets(phase, elapsed) {
+  const progress = clamp(elapsed / Math.max(1, phase.duration));
+  if (phase.id === 'horizontal') {
+    const wave = 0.5 - 0.5 * Math.cos(progress * Math.PI * 2);
+    return [
+      { x: 0.20 + wave * 0.24, y: 0.58 },
+      { x: 0.80 - wave * 0.24, y: 0.58 }
+    ];
+  }
+  if (phase.id === 'vertical') {
+    const wave = 0.5 - 0.5 * Math.cos(progress * Math.PI * 2);
+    const y = 0.34 + wave * 0.38;
+    return [{ x: 0.30, y }, { x: 0.70, y }];
+  }
+  if (phase.id === 'corners') {
+    const pathLeft = [
+      { x: 0.22, y: 0.38 }, { x: 0.42, y: 0.38 },
+      { x: 0.42, y: 0.72 }, { x: 0.22, y: 0.72 },
+      { x: 0.22, y: 0.38 }
+    ];
+    const pathRight = pathLeft.map((point) => ({ x: 1 - point.x, y: point.y }));
+    return [interpolatePath(pathLeft, progress), interpolatePath(pathRight, progress)];
+  }
+  return [{ x: 0.30, y: 0.58 }, { x: 0.70, y: 0.58 }];
+}
+
+function interpolatePath(points, progress) {
+  const scaled = clamp(progress) * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const amount = scaled - index;
+  return {
+    x: points[index].x + (points[index + 1].x - points[index].x) * amount,
+    y: points[index].y + (points[index + 1].y - points[index].y) * amount
+  };
+}
+
+function setTargets(targets, hits = [false, false]) {
+  latestTargets = targets;
+  targetElements.forEach((element, index) => {
+    const target = targets[index];
+    element.style.left = `${target.x * 100}%`;
+    element.style.top = `${target.y * 100}%`;
+    element.classList.toggle('hit', Boolean(hits[index]));
+  });
+}
+
+function setPhase(index) {
+  session.phaseIndex = index;
+  session.phaseElapsed = 0;
+  session.holdElapsed = 0;
+  session.lastUpdateAt = performance.now();
+  const phase = PHASES[index];
+  guideStep.textContent = `ETAPA ${index + 1} DE ${PHASES.length}`;
+  guideTitle.textContent = phase.title;
+  guideText.textContent = phase.text;
+  calibrationInstruction.textContent = phase.text;
+  phaseElements.forEach((element, elementIndex) => {
+    element.classList.toggle('active', elementIndex === index);
+    element.classList.toggle('done', elementIndex < index);
+  });
+  setTargets(phaseTargets(phase, 0));
+}
+
+function startCalibration() {
+  core.reset();
+  applyLoadedProfile();
+  session.active = true;
+  session.phaseIndex = -1;
+  session.phaseElapsed = 0;
+  session.holdElapsed = 0;
+  session.totalFrames = 0;
+  session.visibleFrames = 0;
+  session.samples = createSampleStore();
+  resultPanel.classList.add('hidden');
+  guideLayer.classList.remove('hidden');
+  calibrateButton.disabled = true;
+  calibrateButton.textContent = 'Calibrando…';
+  setPhase(0);
+}
+
+function stopCalibration(message) {
+  session.active = false;
+  guideLayer.classList.add('hidden');
+  calibrateButton.disabled = false;
+  calibrateButton.textContent = 'Começar novamente';
+  calibrationInstruction.textContent = message;
+  phaseElements.forEach((element) => element.classList.remove('active'));
+}
+
+function recordSamples(phase, hands, targets) {
+  hands.forEach((hand, index) => {
+    if (phase.id === 'steady') {
+      session.samples.steadyRaw[index].push({ ...hand.raw });
+      session.samples.steadyVisual[index].push({ ...hand.visual });
+      session.samples.scale[index].push(hand.scale);
+      return;
+    }
+    session.samples.movementError[index].push(distance(hand.visual, targets[index]));
+    if (phase.id === 'horizontal') {
+      session.samples.crossAxisError[index].push(Math.abs(hand.visual.y - targets[index].y));
+    } else if (phase.id === 'vertical') {
+      session.samples.crossAxisError[index].push(Math.abs(hand.visual.x - targets[index].x));
+    }
+  });
+}
+
+function updateCalibration(now) {
+  if (!session.active) return;
+  const dt = session.lastUpdateAt ? clamp(now - session.lastUpdateAt, 0, 80) : 16;
+  session.lastUpdateAt = now;
+  const phase = PHASES[session.phaseIndex];
+  const hands = orderedVisibleHands();
+  const pairVisible = hands.length === 2;
+  session.totalFrames += 1;
+  if (pairVisible) session.visibleFrames += 1;
+
+  const targets = phaseTargets(phase, session.phaseElapsed);
+  const hits = pairVisible ? hands.map((hand, index) => distance(hand.visual, targets[index]) <= TARGET_RADIUS) : [false, false];
+  setTargets(targets, hits);
+
+  if (!pairVisible) {
+    guideText.textContent = 'Mostre as duas mãos para continuar. A etapa está pausada.';
+    calibrationInstruction.textContent = guideText.textContent;
+    return;
+  }
+
+  guideText.textContent = phase.text;
+  calibrationInstruction.textContent = phase.text;
+
+  if (phase.id === 'align') {
+    session.holdElapsed = hits.every(Boolean) ? session.holdElapsed + dt : 0;
+    const progress = clamp(session.holdElapsed / ALIGN_HOLD_MS);
+    updateProgress(progress);
+    if (progress >= 1) setPhase(1);
+    return;
+  }
+
+  if (phase.id === 'steady' && !hits.every(Boolean)) {
+    guideText.textContent = 'Volte para dentro dos círculos. A medição está pausada.';
+    calibrationInstruction.textContent = guideText.textContent;
+    return;
+  }
+
+  session.phaseElapsed += dt;
+  recordSamples(phase, hands, targets);
+  const progress = clamp(session.phaseElapsed / phase.duration);
+  updateProgress(progress);
+
+  if (progress < 1) return;
+  if (session.phaseIndex < PHASES.length - 1) {
+    setPhase(session.phaseIndex + 1);
+  } else {
+    finishCalibration();
+  }
+}
+
+function updateProgress(phaseProgress) {
+  const overall = (session.phaseIndex + phaseProgress) / PHASES.length;
+  guideProgress.style.width = `${Math.round(phaseProgress * 100)}%`;
+  calibrationProgress.style.width = `${Math.round(overall * 100)}%`;
+}
+
+function makeHandProfile(index) {
+  const rawJitter = rms(session.samples.steadyRaw[index]);
+  const visualJitter = rms(session.samples.steadyVisual[index]);
+  const scale = median(session.samples.scale[index]);
+  const movementError = mean(session.samples.movementError[index]);
+  const crossAxisError = mean(session.samples.crossAxisError[index]);
+  const restRadius = clamp(Math.max(visualJitter * 3.2, scale * 0.011), 0.0012, 0.018);
+  const relativeNoise = scale ? rawJitter / scale : 0.02;
+  return {
+    rawJitter,
+    visualJitter,
+    scale,
+    movementError,
+    crossAxisError,
+    restRadius,
+    minCutoff: clamp(1.55 - relativeNoise * 5.5, 0.85, 1.55),
+    beta: clamp(0.14 + movementError * 0.9, 0.14, 0.28)
+  };
+}
+
+function finishCalibration() {
+  const hands = [makeHandProfile(0), makeHandProfile(1)];
+  const continuity = session.totalFrames ? session.visibleFrames / session.totalFrames : 0;
+  const averageJitter = mean(hands.map((hand) => hand.visualJitter));
+  const averageError = mean(hands.map((hand) => hand.movementError));
+  const width = Math.max(1, stage.clientWidth);
+  const jitterPx = averageJitter * width;
+  const errorPx = averageError * width;
+  const stabilityScore = clamp(100 - jitterPx * 6, 0, 100);
+  const accuracyScore = clamp(100 - errorPx * 1.05, 0, 100);
+  const continuityScore = clamp(continuity * 100, 0, 100);
+  const performanceScore = clamp((measuredRate / 24) * 100, 0, 100);
+  const score = Math.round(
+    stabilityScore * 0.32
+    + accuracyScore * 0.30
+    + continuityScore * 0.23
+    + performanceScore * 0.15
+  );
+  const tier = score >= 82 ? 'Excelente' : score >= 68 ? 'Boa' : score >= 52 ? 'Utilizável' : 'Precisa de ajustes';
+  const profile = {
+    version: 1,
+    createdAt: Date.now(),
+    score,
+    tier,
+    hands,
+    device: {
+      fps: measuredRate,
+      inferenceMs: measuredInferenceMs,
+      width: video.videoWidth,
+      height: video.videoHeight
+    },
+    metrics: {
+      jitterPx,
+      errorPx,
+      continuity
+    }
+  };
+  saveProfile(profile);
+  core.applyCalibration?.(profile);
+  showResult(profile);
+  stopCalibration('Calibração concluída e salva neste aparelho.');
+}
+
+function showResult(profile) {
+  resultPanel.classList.remove('hidden');
+  resultTitle.textContent = `Rastreamento ${profile.tier.toLowerCase()}`;
+  scoreBadge.textContent = `${profile.score}/100`;
+  stabilityResult.textContent = `${profile.metrics.jitterPx.toFixed(1)} px`;
+  accuracyResult.textContent = `${profile.metrics.errorPx.toFixed(1)} px`;
+  continuityResult.textContent = `${Math.round(profile.metrics.continuity * 100)}%`;
+  performanceResult.textContent = `${profile.device.fps.toFixed(1)}/s`;
+  resultMessage.textContent = profile.score >= 68
+    ? 'O perfil foi aplicado ao núcleo deste aparelho. Você pode repetir para comparar outra posição ou iluminação.'
+    : 'O perfil foi salvo, mas a iluminação, distância ou desempenho ainda limitaram a precisão. Repita com o celular apoiado e mais luz.';
+  resultCode.textContent = `MX1-${profile.score}-${Math.round(profile.device.fps)}-${Math.round(profile.metrics.jitterPx * 10)}-${Math.round(profile.metrics.errorPx)}`;
+  refreshProfileUi();
+}
+
+function canvasTransform() {
   const sourceWidth = Math.max(1, video.videoWidth || 640);
   const sourceHeight = Math.max(1, video.videoHeight || 480);
   const scale = Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight);
@@ -79,152 +407,11 @@ function coverTransform() {
 }
 
 function canvasPoint(point) {
-  const transform = coverTransform();
+  const transform = canvasTransform();
   return {
     x: transform.x + point.x * transform.width,
     y: transform.y + point.y * transform.height
   };
-}
-
-function rms(points) {
-  if (points.length < 6) return null;
-  const transform = coverTransform();
-  const centerX = mean(points.map((point) => point.x));
-  const centerY = mean(points.map((point) => point.y));
-  return Math.sqrt(mean(points.map((point) => {
-    const dx = (point.x - centerX) * transform.width;
-    const dy = (point.y - centerY) * transform.height;
-    return dx * dx + dy * dy;
-  })));
-}
-
-function formatPx(value) {
-  return Number.isFinite(value) ? `${value.toFixed(1)} px` : '—';
-}
-
-function sortScreen(points) {
-  const visible = points.filter(Boolean).sort((a, b) => a.x - b.x);
-  return [visible[0] ?? null, visible[1] ?? null];
-}
-
-function palmCenter(landmarks) {
-  const points = PALM.map((index) => landmarks[index]).filter(Boolean);
-  if (!points.length) return null;
-  return { x: 1 - mean(points.map((point) => point.x)), y: mean(points.map((point) => point.y)) };
-}
-
-function addHistory(type, pair, now) {
-  for (let index = 0; index < 2; index += 1) {
-    const point = pair[index];
-    if (!point) continue;
-    history[type][index].push({ ...point, at: now });
-    while (history[type][index].length && now - history[type][index][0].at > HISTORY_MS) {
-      history[type][index].shift();
-    }
-    if (measurement.active) measurement.samples[type][index].push({ ...point });
-  }
-}
-
-class PalmFilter {
-  constructor() { this.reset(); }
-  reset() {
-    this.ready = false;
-    this.x = 0.5;
-    this.y = 0.5;
-    this.rawX = 0.5;
-    this.rawY = 0.5;
-    this.vx = 0;
-    this.vy = 0;
-    this.at = 0;
-  }
-  update(point, now) {
-    if (!point) return null;
-    if (!this.ready) {
-      Object.assign(this, { ready: true, x: point.x, y: point.y, rawX: point.x, rawY: point.y, at: now });
-      return { x: this.x, y: this.y };
-    }
-    const dt = clamp((now - this.at) / 1000, 1 / 120, 0.1);
-    this.vx += (((point.x - this.rawX) / dt) - this.vx) * 0.28;
-    this.vy += (((point.y - this.rawY) / dt) - this.vy) * 0.28;
-    const dx = point.x - this.x;
-    const dy = point.y - this.y;
-    const distance = Math.hypot(dx, dy);
-    const speed = Math.hypot(this.vx, this.vy);
-    const deadZone = speed < 0.12 ? 0.0048 : speed < 0.34 ? 0.002 : 0.0007;
-    if (distance > deadZone) {
-      const response = Math.max(clamp((speed - 0.05) / 0.85), clamp(distance / 0.05));
-      const alpha = distance > 0.065 || speed > 1.25 ? 1 : 0.13 + response * 0.82;
-      this.x += dx * alpha;
-      this.y += dy * alpha;
-    } else {
-      this.vx *= 0.65;
-      this.vy *= 0.65;
-    }
-    Object.assign(this, { rawX: point.x, rawY: point.y, at: now });
-    return { x: this.x, y: this.y };
-  }
-}
-
-const filters = [new PalmFilter(), new PalmFilter()];
-
-function handleHands(result, now) {
-  latestHandLandmarks = (result.landmarks ?? []).map((landmarks) => landmarks.map((point) => ({ x: 1 - point.x, y: point.y })));
-  rawHands = sortScreen((result.landmarks ?? []).map(palmCenter));
-  stableHands = rawHands.map((point, index) => filters[index].update(point, now));
-  addHistory('hand', rawHands, now);
-  addHistory('stable', stableHands, now);
-}
-
-function handlePose(result, now) {
-  const pose = result.landmarks?.[0];
-  poseWrists = pose ? sortScreen([
-    pose[15] ? { x: 1 - pose[15].x, y: pose[15].y } : null,
-    pose[16] ? { x: 1 - pose[16].x, y: pose[16].y } : null
-  ]) : [null, null];
-  addHistory('pose', poseWrists, now);
-}
-
-async function createTask(create) {
-  try { return await create('GPU'); }
-  catch (error) {
-    console.warn('GPU indisponível; usando CPU.', error);
-    return create('CPU');
-  }
-}
-
-async function loadModels() {
-  statusText.textContent = 'Carregando MediaPipe…';
-  statusDetail.textContent = 'A primeira abertura pode levar alguns segundos.';
-  const vision = await FilesetResolver.forVisionTasks(WASM);
-  handTask = await createTask((delegate) => HandLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: HAND_MODEL, delegate },
-    runningMode: 'VIDEO',
-    numHands: 2,
-    minHandDetectionConfidence: 0.45,
-    minHandPresenceConfidence: 0.45,
-    minTrackingConfidence: 0.55
-  }));
-  poseTask = await createTask((delegate) => PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: POSE_MODEL, delegate },
-    runningMode: 'VIDEO',
-    numPoses: 1,
-    minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.55,
-    outputSegmentationMasks: false
-  }));
-}
-
-async function openCamera() {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('A câmera exige HTTPS e navegador compatível.');
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60, max: 60 } }
-  });
-  video.srcObject = stream;
-  await video.play();
-  const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
-  resolutionValue.textContent = settings.width && settings.height ? `${settings.width}×${settings.height}` : `${video.videoWidth}×${video.videoHeight}`;
 }
 
 function resizeCanvas() {
@@ -234,19 +421,7 @@ function resizeCanvas() {
   canvas.height = Math.max(1, Math.round(rect.height * dpr));
 }
 
-function drawPath(points, color, width) {
-  if (points.length < 2) return;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.beginPath();
-  points.forEach((point, index) => {
-    const screen = canvasPoint(point);
-    if (index) ctx.lineTo(screen.x, screen.y); else ctx.moveTo(screen.x, screen.y);
-  });
-  ctx.stroke();
-}
-
-function drawPoint(point, color, label, radius) {
+function drawPoint(point, color, radius) {
   if (!point) return;
   const screen = canvasPoint(point);
   ctx.fillStyle = color;
@@ -256,105 +431,70 @@ function drawPoint(point, color, label, radius) {
   ctx.strokeStyle = 'rgba(0,0,0,.65)';
   ctx.lineWidth = 3;
   ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = `${Math.max(18, canvas.width / 45)}px system-ui`;
-  ctx.fillText(label, screen.x + radius + 5, screen.y - radius);
 }
 
-function drawHands() {
-  ctx.fillStyle = 'rgba(255,255,255,.62)';
-  for (const landmarks of latestHandLandmarks) {
-    for (const point of landmarks) {
-      const screen = canvasPoint(point);
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, Math.max(2, canvas.width / 320), 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-}
-
-function render(now) {
+function drawSnapshot() {
   resizeCanvas();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawHands();
-  for (let index = 0; index < 2; index += 1) {
-    drawPath(history.hand[index], 'rgba(255,93,143,.45)', Math.max(2, canvas.width / 350));
-    drawPath(history.stable[index], 'rgba(54,226,165,.78)', Math.max(3, canvas.width / 270));
-    drawPoint(poseWrists[index], '#ffd84d', 'Pose', Math.max(8, canvas.width / 76));
-    drawPoint(rawHands[index], '#ff5d8f', 'Bruta', Math.max(10, canvas.width / 65));
-    drawPoint(stableHands[index], '#36e2a5', 'Estável', Math.max(7, canvas.width / 82));
+  for (const hand of latestSnapshot?.hands ?? []) {
+    if (!hand.visible) continue;
+    drawPoint(hand.raw, '#ff5d8f', Math.max(10, canvas.width / 70));
+    drawPoint(hand.collision, '#66c7ff', Math.max(7, canvas.width / 92));
+    drawPoint(hand.visual, '#36e2a5', Math.max(8, canvas.width / 82));
   }
-  for (const type of Object.keys(liveFields)) {
-    for (let index = 0; index < 2; index += 1) liveFields[type][index].textContent = formatPx(rms(history[type][index]));
-  }
-  updateMeasurement(now);
 }
 
-function resetSamples() {
-  measurement.samples = { hand: [[], []], stable: [[], []], pose: [[], []] };
+async function createHandTask() {
+  statusText.textContent = 'Carregando rastreamento…';
+  statusDetail.textContent = 'A primeira abertura pode levar alguns segundos.';
+  const vision = await FilesetResolver.forVisionTasks(WASM);
+  const create = (delegate) => HandLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: HAND_MODEL, delegate },
+    runningMode: 'VIDEO',
+    numHands: 2,
+    minHandDetectionConfidence: 0.48,
+    minHandPresenceConfidence: 0.48,
+    minTrackingConfidence: 0.58
+  });
+  try {
+    return await create('GPU');
+  } catch (error) {
+    console.warn('GPU indisponível; usando CPU.', error);
+    return create('CPU');
+  }
 }
 
-function startMeasurement() {
-  resetSamples();
-  measurement.waiting = true;
-  measurement.active = false;
-  measurement.startedAt = 0;
-  measureProgress.style.width = '0%';
-  measureInstruction.textContent = 'Mostre as duas mãos abertas e fique completamente parado.';
-  Object.values(measureFields).forEach((field) => { field.textContent = '—'; });
-  measureButton.disabled = true;
-  measureButton.textContent = 'Preparando…';
-}
-
-function updateMeasurement(now) {
-  if (!measurement.waiting && !measurement.active) return;
-  if (!validPair(rawHands)) {
-    if (measurement.active) resetSamples();
-    measurement.active = false;
-    measurement.startedAt = 0;
-    measureProgress.style.width = '0%';
-    measureInstruction.textContent = 'As duas mãos precisam permanecer visíveis. Posicione novamente.';
-    return;
+async function openCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('A câmera exige HTTPS e um navegador compatível.');
   }
-  if (!measurement.active) {
-    measurement.waiting = false;
-    measurement.active = true;
-    measurement.startedAt = now;
-    resetSamples();
-    measureInstruction.textContent = 'Medição em andamento: não mova as mãos.';
-  }
-  const progress = clamp((now - measurement.startedAt) / MEASURE_MS);
-  measureProgress.style.width = `${Math.round(progress * 100)}%`;
-  if (progress < 1) return;
-  measurement.active = false;
-  for (const type of Object.keys(measureFields)) {
-    const values = measurement.samples[type].map(rms).filter(Number.isFinite);
-    measureFields[type].textContent = formatPx(values.length ? mean(values) : null);
-  }
-  measureInstruction.textContent = 'Medição concluída. Repita em outro modo para comparar.';
-  measureButton.disabled = false;
-  measureButton.textContent = 'Medir novamente';
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: 'user',
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 60, max: 60 }
+    }
+  });
+  video.srcObject = stream;
+  await video.play();
+  const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
+  resolutionValue.textContent = settings.width && settings.height
+    ? `${settings.width}×${settings.height}`
+    : `${video.videoWidth}×${video.videoHeight}`;
 }
 
 function updateRates(now) {
   if (now - rateStartedAt < 1000) return;
   const seconds = (now - rateStartedAt) / 1000;
+  measuredRate = counters.hand / seconds;
+  measuredInferenceMs = counters.hand ? counters.handMs / counters.hand : 0;
   cameraRate.textContent = `${Math.round(counters.camera / seconds)} fps`;
-  handRate.textContent = `${(counters.hand / seconds).toFixed(1)}/s`;
-  poseRate.textContent = `${(counters.pose / seconds).toFixed(1)}/s`;
-  handTime.textContent = counters.hand ? `${(counters.handMs / counters.hand).toFixed(1)} ms` : '— ms';
-  poseTime.textContent = counters.pose ? `${(counters.poseMs / counters.pose).toFixed(1)} ms` : '— ms';
-  const combined = lastDurations.hand + lastDurations.pose;
-  combinedTime.textContent = combined ? `${combined.toFixed(1)} ms` : '— ms';
-  counters = { camera: 0, hand: 0, pose: 0, handMs: 0, poseMs: 0 };
+  handRate.textContent = `${measuredRate.toFixed(1)}/s`;
+  handTime.textContent = measuredInferenceMs ? `${measuredInferenceMs.toFixed(1)} ms` : '— ms';
+  counters = resetCounters();
   rateStartedAt = now;
-}
-
-function runs(model) {
-  const mode = modeSelect.value;
-  if (mode === 'hand') return model === 'hand';
-  if (mode === 'pose') return model === 'pose';
-  return frame % 2 === (model === 'hand' ? 0 : 1);
 }
 
 function processFrame(now, metadata) {
@@ -362,26 +502,17 @@ function processFrame(now, metadata) {
   const mediaTime = metadata?.mediaTime ?? video.currentTime;
   if (mediaTime !== lastMediaTime && video.readyState >= 2) {
     lastMediaTime = mediaTime;
-    frame += 1;
     counters.camera += 1;
-    const timestamp = Math.round(now);
-    if (runs('hand')) {
-      const started = performance.now();
-      const result = handTask.detectForVideo(video, timestamp);
-      lastDurations.hand = performance.now() - started;
-      counters.hand += 1;
-      counters.handMs += lastDurations.hand;
-      handleHands(result, now);
-    }
-    if (runs('pose')) {
-      const started = performance.now();
-      const result = poseTask.detectForVideo(video, timestamp);
-      lastDurations.pose = performance.now() - started;
-      counters.pose += 1;
-      counters.poseMs += lastDurations.pose;
-      handlePose(result, now);
-    }
-    render(now);
+    const startedAt = performance.now();
+    const result = handTask.detectForVideo(video, Math.round(now));
+    const processingMs = performance.now() - startedAt;
+    counters.hand += 1;
+    counters.handMs += processingMs;
+    latestSnapshot = core.ingest(result, now);
+    const visibleCount = latestSnapshot.hands.filter((hand) => hand.visible).length;
+    visibleHands.textContent = `${visibleCount}/2`;
+    drawSnapshot();
+    updateCalibration(now);
     updateRates(now);
   }
   schedule();
@@ -389,30 +520,34 @@ function processFrame(now, metadata) {
 
 function schedule() {
   if (!running) return;
-  if (typeof video.requestVideoFrameCallback === 'function') video.requestVideoFrameCallback(processFrame);
-  else requestAnimationFrame((now) => processFrame(now, { mediaTime: video.currentTime }));
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    video.requestVideoFrameCallback(processFrame);
+  } else {
+    requestAnimationFrame((now) => processFrame(now, { mediaTime: video.currentTime }));
+  }
 }
 
-function clearAll() {
-  for (const type of Object.keys(history)) for (const series of history[type]) series.length = 0;
-  filters.forEach((filter) => filter.reset());
-  rawHands = [null, null];
-  stableHands = [null, null];
-  poseWrists = [null, null];
+function resetTracking() {
+  core.reset();
+  applyLoadedProfile();
+  latestSnapshot = null;
+  if (session.active) stopCalibration('Calibração interrompida. Comece novamente.');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 startButton.addEventListener('click', async () => {
   startButton.disabled = true;
   startButton.textContent = 'Carregando…';
   try {
-    await loadModels();
+    handTask = await createHandTask();
     await openCamera();
+    applyLoadedProfile();
     running = true;
     startPanel.classList.add('hidden');
-    statusText.textContent = 'Laboratório ativo';
-    statusDetail.textContent = 'Processamento local; nenhum vídeo é enviado.';
-    measureInstruction.textContent = 'Posicione as duas mãos e inicie a medição.';
-    measureButton.disabled = false;
+    statusText.textContent = 'Rastreamento ativo';
+    statusDetail.textContent = 'Posicione as duas mãos para iniciar a calibração.';
+    calibrationInstruction.textContent = 'Toque em “Começar calibração” e siga os círculos.';
+    calibrateButton.disabled = false;
     schedule();
   } catch (error) {
     console.error(error);
@@ -423,16 +558,23 @@ startButton.addEventListener('click', async () => {
   }
 });
 
-clearButton.addEventListener('click', clearAll);
-measureButton.addEventListener('click', startMeasurement);
-modeSelect.addEventListener('change', () => {
-  clearAll();
-  lastDurations = { hand: 0, pose: 0 };
+calibrateButton.addEventListener('click', startCalibration);
+resetButton.addEventListener('click', resetTracking);
+copyButton.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(resultCode.textContent);
+    copyButton.textContent = 'Copiado!';
+    setTimeout(() => { copyButton.textContent = 'Copiar resultado'; }, 1200);
+  } catch {
+    copyButton.textContent = 'Selecione o código acima';
+  }
 });
 window.addEventListener('resize', resizeCanvas, { passive: true });
 window.addEventListener('pagehide', () => {
   running = false;
   for (const track of video.srcObject?.getTracks?.() ?? []) track.stop();
   handTask?.close?.();
-  poseTask?.close?.();
 });
+
+refreshProfileUi();
+if (loadedProfile) showResult(loadedProfile);
