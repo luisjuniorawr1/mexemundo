@@ -103,14 +103,14 @@ class StableTurboPointFilter {
     let alpha;
 
     if (this.wrist) {
-      const movement = clamp((speed - 0.07) / 0.95);
+      const movement = clamp((speed - 0.09) / 0.90);
       const displacement = clamp(distance / 0.045);
       const responsiveness = Math.max(movement, displacement);
 
-      deadZone = speed < 0.12 ? 0.0032 : speed < 0.35 ? 0.0016 : 0.0007;
-      alpha = 0.18 + responsiveness * 0.76;
+      deadZone = speed < 0.14 ? 0.0040 : speed < 0.38 ? 0.0019 : 0.0007;
+      alpha = 0.16 + responsiveness * 0.78;
 
-      if (distance > 0.075 || speed > 1.35) alpha = 1;
+      if (distance > 0.07 || speed > 1.30) alpha = 1;
     } else {
       deadZone = 0.0016;
       alpha = clamp(0.20 + distance * 5, 0.20, 0.72);
@@ -127,8 +127,8 @@ class StableTurboPointFilter {
       this.vx += (filteredVx - this.vx) * 0.35;
       this.vy += (filteredVy - this.vy) * 0.35;
     } else {
-      this.vx *= 0.72;
-      this.vy *= 0.72;
+      this.vx *= 0.62;
+      this.vy *= 0.62;
     }
 
     this.rawX = rawX;
