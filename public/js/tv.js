@@ -27,6 +27,7 @@ const poseValue = document.querySelector('#poseValue');
 
 const GAME_SECONDS = 45;
 const POSE_TIMEOUT_MS = 240;
+const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88, top: 0.10, bottom: 0.86 });
 const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const WRIST_NAMES = new Set(['left', 'right']);
 const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '#fee440'];
@@ -309,14 +310,25 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function getPlayBounds(width, height, radius = 0) {
+  return {
+    left: width * PLAY_AREA.left + radius,
+    right: width * PLAY_AREA.right - radius,
+    top: height * PLAY_AREA.top + radius,
+    bottom: height * PLAY_AREA.bottom - radius
+  };
+}
+
 function spawnBalloon(width, height, now) {
   const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));
   const special = Math.random() < 0.12;
+  const finalRadius = special ? radius * 1.15 : radius;
+  const bounds = getPlayBounds(width, height, finalRadius);
   balloons.push({
     id: `${now}-${Math.random()}`,
-    x: randomBetween(radius * 1.6, width - radius * 1.6),
-    y: height + radius * 1.5,
-    radius: special ? radius * 1.15 : radius,
+    x: randomBetween(bounds.left, bounds.right),
+    y: bounds.bottom,
+    radius: finalRadius,
     speed: randomBetween(65, 110) + Math.min(55, score * 0.12),
     drift: randomBetween(-28, 28),
     phase: Math.random() * Math.PI * 2,
@@ -394,8 +406,13 @@ function updateGame(now, dt, width, height) {
 
   const seconds = dt / 1000;
   for (const balloon of balloons) {
+    const bounds = getPlayBounds(width, height, balloon.radius);
     balloon.y -= balloon.speed * seconds;
-    balloon.x += (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds;
+    balloon.x = clamp(
+      balloon.x + (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds,
+      bounds.left,
+      bounds.right
+    );
   }
 
   const poppedIds = new Set();
@@ -412,7 +429,7 @@ function updateGame(now, dt, width, height) {
   let missed = false;
   balloons = balloons.filter((balloon) => {
     if (poppedIds.has(balloon.id)) return false;
-    if (balloon.y + balloon.radius < -20) {
+    if (balloon.y <= height * PLAY_AREA.top + balloon.radius) {
       missed = true;
       return false;
     }
@@ -457,13 +474,14 @@ function updateMotion(now, dt) {
     const isWrist = WRIST_NAMES.has(name);
     const speed = Math.hypot(source.vx, source.vy);
     const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);
-    const lead = isWrist ? Math.min(0.032, 0.008 + packetAge) : 0;
-    const desiredX = clamp(source.x + source.vx * lead * 0.55);
-    const desiredY = clamp(source.y + source.vy * lead * 0.55);
+    const lead = isWrist && speed > 0.35 ? Math.min(0.024, 0.006 + packetAge) : 0;
+    const desiredX = clamp(source.x + source.vx * lead * 0.45);
+    const desiredY = clamp(source.y + source.vy * lead * 0.45);
     const distance = Math.hypot(desiredX - current.x, desiredY - current.y);
 
     if (isWrist) {
-      if (!motion.detected || distance > 0.0015 || speed > 0.08) {
+      const movementThreshold = speed < 0.14 ? 0.0032 : speed < 0.38 ? 0.0018 : 0.0008;
+      if (!motion.detected || distance > movementThreshold) {
         current.x = desiredX;
         current.y = desiredY;
       }
