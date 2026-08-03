@@ -31,12 +31,15 @@
     </section>
 
     <section id="calibrationPanel" class="modal-card calibration-panel hidden">
-      <span class="eyebrow">CALIBRAÇÃO DO CURSOR</span>
-      <h2>Segure a mão direita no centro</h2>
-      <p>Fique parado por alguns segundos. Vamos medir sua distância e o tremor natural da câmera.</p>
-      <div class="motion-calibration-target" aria-hidden="true">✋</div>
+      <span class="eyebrow">CALIBRAÇÃO DAS DUAS MÃOS</span>
+      <h2>Posicione uma mão em cada círculo</h2>
+      <p>Mantenha os ombros e as duas mãos parados por cerca de 4 segundos. Cada mão será medida separadamente.</p>
+      <div class="motion-calibration-hands" aria-hidden="true">
+        <div class="motion-calibration-target left"><span>🤚</span><small>ESQUERDA</small></div>
+        <div class="motion-calibration-target right"><span>✋</span><small>DIREITA</small></div>
+      </div>
       <div class="calibration-meter"><span id="calibrationProgress"></span></div>
-      <strong id="calibrationMessage">Mostre a mão direita e os dois ombros.</strong>
+      <strong id="calibrationMessage">Mostre as duas mãos e os dois ombros.</strong>
     </section>
 
     <section id="menuPanel" class="motion-menu hidden" aria-label="Escolha um jogo">
