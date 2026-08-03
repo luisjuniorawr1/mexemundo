@@ -1,4 +1,5 @@
 import { RealtimeClient } from './realtime.js';
+import { SessionKeeper } from './session-keeper.js';
 import {
   FilesetResolver,
   PoseLandmarker
@@ -41,6 +42,7 @@ let sentWindow = performance.now();
 let sequence = 0;
 let previousFrameAt = 0;
 let transportMode = 'relay';
+let sessionKeeper = null;
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -303,17 +305,19 @@ socket.on('transport', ({ mode }) => {
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
-socket.on('room-status', ({ tv }) => {
+function applyTvStatus({ tv } = {}) {
   if (!running) return;
   sensorBadge.textContent = tv
     ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
-});
+}
+
+socket.on('room-status', applyTvStatus);
 
 socket.on('disconnect', () => {
   if (!running) return;
-  sensorBadge.textContent = 'Servidor desconectado';
+  sensorBadge.textContent = `Reconectando • ${room}`;
   sensorBadge.className = 'badge waiting';
 });
 
@@ -342,6 +346,20 @@ startButton.addEventListener('click', async () => {
     sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
+
+    sessionKeeper?.stop();
+    sessionKeeper = new SessionKeeper({
+      client: socket,
+      room,
+      role: 'phone',
+      onStatus: applyTvStatus,
+      onWaiting: () => {
+        sensorBadge.textContent = `Reconectando • ${room}`;
+        sensorBadge.className = 'badge waiting';
+      }
+    });
+    sessionKeeper.start();
+
     schedulePrediction();
   } catch (error) {
     console.error(error);
