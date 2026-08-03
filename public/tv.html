@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#4f2ed6" />
+  <title>MexeMundo — Estoura-Balões</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="tv-page">
+  <header class="topbar tv-topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark">M</span>
+      <div><strong>MexeMundo</strong><small>Estoura-Balões</small></div>
+    </div>
+    <div class="top-actions">
+      <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
+      <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
+    </div>
+  </header>
+
+  <main class="tv-layout">
+    <section class="game-shell" aria-label="Área do jogo">
+      <canvas id="gameCanvas"></canvas>
+
+      <div id="scoreHud" class="score-hud hidden">
+        <div class="hud-pill"><span>Pontos</span><strong id="scoreValue">0</strong></div>
+        <div class="hud-pill time"><span>Tempo</span><strong id="timeValue">45</strong></div>
+        <div class="hud-pill combo"><span>Combo</span><strong id="comboValue">x1</strong></div>
+      </div>
+
+      <section id="pairPanel" class="modal-card pair-panel">
+        <span class="eyebrow">CONECTE O CELULAR</span>
+        <h2>Abra <strong>/celular</strong> no celular</h2>
+        <p>Use o mesmo endereço desta tela e digite o código:</p>
+        <div id="roomCode" class="room-code">----</div>
+        <p class="room-hint">O vídeo da câmera fica no celular. A TV recebe apenas os movimentos.</p>
+      </section>
+
+      <section id="calibrationPanel" class="modal-card calibration-panel hidden">
+        <div class="mascot">🙌</div>
+        <span class="eyebrow">PREPARAÇÃO</span>
+        <h2>Mostre o corpo e levante as mãos</h2>
+        <p>Fique a uma distância segura da tela. Quando as duas mãos forem reconhecidas, a contagem começa.</p>
+        <div class="calibration-meter"><span id="calibrationProgress"></span></div>
+        <strong id="calibrationMessage">Procurando você…</strong>
+      </section>
+
+      <section id="countdownPanel" class="countdown-panel hidden" aria-live="assertive">
+        <span id="countdownValue">3</span>
+      </section>
+
+      <section id="resultPanel" class="modal-card result-panel hidden">
+        <div class="result-stars">⭐ ⭐ ⭐</div>
+        <span class="eyebrow">RODADA ENCERRADA</span>
+        <h2 id="resultTitle">Mandou muito bem!</h2>
+        <div class="final-score"><strong id="finalScoreValue">0</strong><span>pontos</span></div>
+        <p id="resultMessage">Você estourou muitos balões!</p>
+        <button id="restartButton" class="button primary" type="button">Jogar novamente</button>
+        <p class="gesture-tip">Também dá para levantar as duas mãos por 2 segundos.</p>
+      </section>
+
+      <div class="safe-zone-hint">Mantenha espaço livre ao redor 👣</div>
+
+      <details class="diagnostics">
+        <summary>Diagnóstico</summary>
+        <div>FPS <strong id="fpsValue">0</strong></div>
+        <div>Rede <strong id="networkValue">-- ms</strong></div>
+        <div>Pose <strong id="poseValue">não detectada</strong></div>
+      </details>
+    </section>
+  </main>
+
+  <script type="module" src="/js/tv.js"></script>
+</body>
+</html>
