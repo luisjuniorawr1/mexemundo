@@ -27,7 +27,7 @@ const poseValue = document.querySelector('#poseValue');
 
 const GAME_SECONDS = 45;
 const POSE_TIMEOUT_MS = 240;
-const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88, top: 0.10, bottom: 0.86 });
+const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88 });
 const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const WRIST_NAMES = new Set(['left', 'right']);
 const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '#fee440'];
@@ -310,12 +310,10 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
-function getPlayBounds(width, height, radius = 0) {
+function getPlayBounds(width, radius = 0) {
   return {
     left: width * PLAY_AREA.left + radius,
-    right: width * PLAY_AREA.right - radius,
-    top: height * PLAY_AREA.top + radius,
-    bottom: height * PLAY_AREA.bottom - radius
+    right: width * PLAY_AREA.right - radius
   };
 }
 
@@ -323,11 +321,11 @@ function spawnBalloon(width, height, now) {
   const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));
   const special = Math.random() < 0.12;
   const finalRadius = special ? radius * 1.15 : radius;
-  const bounds = getPlayBounds(width, height, finalRadius);
+  const bounds = getPlayBounds(width, finalRadius);
   balloons.push({
     id: `${now}-${Math.random()}`,
     x: randomBetween(bounds.left, bounds.right),
-    y: bounds.bottom,
+    y: height + finalRadius * 1.5,
     radius: finalRadius,
     speed: randomBetween(65, 110) + Math.min(55, score * 0.12),
     drift: randomBetween(-28, 28),
@@ -406,7 +404,7 @@ function updateGame(now, dt, width, height) {
 
   const seconds = dt / 1000;
   for (const balloon of balloons) {
-    const bounds = getPlayBounds(width, height, balloon.radius);
+    const bounds = getPlayBounds(width, balloon.radius);
     balloon.y -= balloon.speed * seconds;
     balloon.x = clamp(
       balloon.x + (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds,
@@ -429,7 +427,7 @@ function updateGame(now, dt, width, height) {
   let missed = false;
   balloons = balloons.filter((balloon) => {
     if (poppedIds.has(balloon.id)) return false;
-    if (balloon.y <= height * PLAY_AREA.top + balloon.radius) {
+    if (balloon.y + balloon.radius < -20) {
       missed = true;
       return false;
     }

@@ -44,7 +44,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.6.1',
+      version: '0.6.2',
       transport: 'webrtc-dual-channel-adaptive'
     }));
     return;
