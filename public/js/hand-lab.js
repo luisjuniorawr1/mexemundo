@@ -151,9 +151,40 @@ function refreshProfileUi() {
   profileDate.textContent = new Date(loadedProfile.createdAt).toLocaleDateString('pt-BR');
 }
 
+function canvasTransform() {
+  const sourceWidth = Math.max(1, video.videoWidth || 360);
+  const sourceHeight = Math.max(1, video.videoHeight || 640);
+  const scale = Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  return { width, height, x: (canvas.width - width) / 2, y: (canvas.height - height) / 2 };
+}
+
+function canvasPoint(point) {
+  const transform = canvasTransform();
+  return {
+    x: transform.x + point.x * transform.width,
+    y: transform.y + point.y * transform.height
+  };
+}
+
+function stageNormalizedPoint(point) {
+  if (!point) return null;
+  const screen = canvasPoint(point);
+  return {
+    x: screen.x / Math.max(1, canvas.width),
+    y: screen.y / Math.max(1, canvas.height)
+  };
+}
+
 function orderedVisibleHands() {
   const hands = latestSnapshot?.hands?.filter((hand) => hand.visible && hand.visual) ?? [];
-  return hands.sort((a, b) => a.visual.x - b.visual.x).slice(0, 2);
+  return hands.map((hand) => ({
+    ...hand,
+    raw: stageNormalizedPoint(hand.raw),
+    visual: stageNormalizedPoint(hand.visual),
+    collision: stageNormalizedPoint(hand.collision)
+  })).sort((a, b) => a.visual.x - b.visual.x).slice(0, 2);
 }
 
 function phaseTargets(phase, elapsed) {
@@ -395,23 +426,6 @@ function showResult(profile) {
   refreshProfileUi();
 }
 
-function canvasTransform() {
-  const sourceWidth = Math.max(1, video.videoWidth || 640);
-  const sourceHeight = Math.max(1, video.videoHeight || 480);
-  const scale = Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight);
-  const width = sourceWidth * scale;
-  const height = sourceHeight * scale;
-  return { width, height, x: (canvas.width - width) / 2, y: (canvas.height - height) / 2 };
-}
-
-function canvasPoint(point) {
-  const transform = canvasTransform();
-  return {
-    x: transform.x + point.x * transform.width,
-    y: transform.y + point.y * transform.height
-  };
-}
-
 function resizeCanvas() {
   const rect = stage.getBoundingClientRect();
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -470,9 +484,11 @@ async function openCamera() {
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 640 },
-      height: { ideal: 480 },
-      frameRate: { ideal: 60, max: 60 }
+      width: { ideal: 360 },
+      height: { ideal: 640 },
+      aspectRatio: { ideal: 9 / 16 },
+      frameRate: { ideal: 60, max: 60 },
+      resizeMode: 'crop-and-scale'
     }
   });
   video.srcObject = stream;
