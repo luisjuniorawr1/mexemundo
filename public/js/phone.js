@@ -3,16 +3,14 @@ import {
   HAND_SYSTEM_CONFIG,
   MEDIAPIPE_TASKS_VERSION
 } from './hand-system-config.js';
-import {
-  FilesetResolver,
-  PoseLandmarker
-} from `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
 
 const CAMERA = HAND_SYSTEM_CONFIG.camera;
 const DETECTOR = HAND_SYSTEM_CONFIG.detector;
 const FILTER = HAND_SYSTEM_CONFIG.filter;
 const SCHEDULER = HAND_SYSTEM_CONFIG.scheduler;
+const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
+let visionModulePromise = null;
 
 const socket = new RealtimeClient();
 const roomInput = document.querySelector('#roomInput');
@@ -204,6 +202,8 @@ function filteredPoint(name, landmark, now) {
 
 async function createLandmarker() {
   trackingStatus.textContent = 'Ativando rastreamento rápido…';
+  visionModulePromise ??= import(TASKS_MODULE);
+  const { FilesetResolver, PoseLandmarker } = await visionModulePromise;
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   const options = {
     baseOptions: {
