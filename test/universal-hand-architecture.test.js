@@ -70,3 +70,15 @@ test('jogos separam posição visual e trajetória de colisão', () => {
     assert.match(game.content, /\.collision/, `${game.name} deve usar a saída de colisão.`);
   }
 });
+
+test('menu abre sem criar uma segunda calibração', () => {
+  const menu = fs.readFileSync(path.join(jsDirectory, 'menu.js'), 'utf8');
+  assert.match(menu, /from\s+['"]\.\/game-hand-input\.js['"]/);
+  assert.match(menu, /from\s+['"]\.\/universal-menu-cursor\.js['"]/);
+  assert.match(menu, /showMenu\(\)/);
+  assert.doesNotMatch(
+    menu,
+    /buildMotionProfile|getMotionProfile|saveMotionProfile|clearMotionProfile|CALIBRATION_MS|MIN_CALIBRATION_SAMPLES/,
+    'O menu não pode criar ou aguardar um perfil legado.'
+  );
+});
