@@ -1,10 +1,15 @@
-import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm';
+import {
+  HAND_SYSTEM_CONFIG,
+  MEDIAPIPE_TASKS_VERSION
+} from './hand-system-config.js';
 
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
+const DETECTOR = HAND_SYSTEM_CONFIG.detector;
 
 let handLandmarker = null;
 let initialized = false;
+let visionModulePromise = null;
 
 function serializeCategory(category) {
   return {
@@ -31,18 +36,24 @@ function serializeResult(result) {
   };
 }
 
+async function loadVisionModule() {
+  visionModulePromise ??= import(TASKS_MODULE);
+  return visionModulePromise;
+}
+
 async function createTask(delegate) {
+  const { FilesetResolver, HandLandmarker } = await loadVisionModule();
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   return HandLandmarker.createFromOptions(vision, {
     baseOptions: {
-      modelAssetPath: MODEL_URL,
+      modelAssetPath: DETECTOR.handModel,
       delegate
     },
     runningMode: 'VIDEO',
-    numHands: 2,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    numHands: DETECTOR.numberOfHands,
+    minHandDetectionConfidence: DETECTOR.minimumDetectionConfidence,
+    minHandPresenceConfidence: DETECTOR.minimumPresenceConfidence,
+    minTrackingConfidence: DETECTOR.minimumTrackingConfidence
   });
 }
 
@@ -78,7 +89,11 @@ self.addEventListener('message', async (event) => {
     const bitmap = message.bitmap;
     if (!initialized || !handLandmarker || !bitmap) {
       bitmap?.close?.();
-      self.postMessage({ type: 'frame-error', frameId: message.frameId, message: 'Detector ainda não está pronto.' });
+      self.postMessage({
+        type: 'frame-error',
+        frameId: message.frameId,
+        message: 'Detector ainda não está pronto.'
+      });
       return;
     }
 
