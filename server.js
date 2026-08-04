@@ -44,9 +44,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.0',
+      version: '0.10.1',
       games: ['balloons', 'goalkeeper'],
-      training: 'in-game-two-hand-calibration',
+      training: 'universal-two-hand-profile-in-game',
+      profile: 'mexemundo-universal-hand-profile-v1',
       tracking: 'mediapipe-hand-landmarker-0.10.35-worker',
       shoulders: 'pose-landmarker-lite-low-rate',
       interaction: 'dual-hand-calibrated-cursor',
