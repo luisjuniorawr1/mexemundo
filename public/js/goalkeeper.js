@@ -1,12 +1,13 @@
 import { RealtimeClient } from './realtime.js';
+import { createUniversalHandInput } from './game-hand-input.js';
 import {
   MotionCursor,
-  calibratedDeadZone,
   getPersistentRoom,
   roomHref
 } from './motion-ui.js';
 
 const socket = new RealtimeClient();
+const handInput = createUniversalHandInput();
 const room = getPersistentRoom();
 const roomCode = document.querySelector('#roomCode');
 const pairPanel = document.querySelector('#pairPanel');
@@ -37,15 +38,11 @@ const motionCursorElement = document.querySelector('#motionCursor');
 const backButton = document.querySelector('#backButton');
 
 const GAME_SECONDS = 45;
-const POSE_TIMEOUT_MS = 240;
-const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
-const WRIST_NAMES = new Set(['left', 'right']);
 const GOAL_AREA = Object.freeze({ left: 0.14, right: 0.86, top: 0.30, bottom: 0.91 });
 const SHOT_TARGET = Object.freeze({ left: 0.20, right: 0.80, top: 0.43, bottom: 0.82 });
 const backgroundCanvas = document.createElement('canvas');
 const backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
 const motionCursor = new MotionCursor({ element: motionCursorElement, dwellMs: 950, enabled: false });
-const sessionDeadZone = Math.min(0.0065, calibratedDeadZone(0.004));
 backButton.href = roomHref('/', room);
 
 roomCode.textContent = room;
@@ -56,9 +53,13 @@ let phoneConnected = false;
 let transportMode = 'relay';
 let transportRtt = 0;
 let state = 'pairing';
-let target = emptyPose();
-let motion = emptyPose();
-let previousHands = { left: emptyPoint(0.35, 0.55), right: emptyPoint(0.65, 0.55) };
+let handFrames = handInput.sample();
+let motion = handFrames.visual;
+let collision = handFrames.collision;
+let previousCollision = {
+  left: { ...collision.left },
+  right: { ...collision.right }
+};
 let calibrationStartedAt = 0;
 let raisedHandsStartedAt = 0;
 let countdownTimer = null;
@@ -98,43 +99,14 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
-function emptyPoint(x = 0.5, y = 0.5) {
-  return { x, y, vx: 0, vy: 0, visible: false };
-}
-
-function emptyPose() {
-  return {
-    detected: false,
-    left: emptyPoint(0.35, 0.55),
-    right: emptyPoint(0.65, 0.55),
-    leftShoulder: emptyPoint(0.44, 0.35),
-    rightShoulder: emptyPoint(0.56, 0.35),
-    receivedAt: 0,
-    sequence: 0,
-    processingMs: 0,
-    sourceIntervalMs: 0
+function refreshHands(now) {
+  previousCollision = {
+    left: { ...collision.left },
+    right: { ...collision.right }
   };
-}
-
-function normalizePoint(point, fallback) {
-  return {
-    x: clamp(Number.isFinite(point?.x) ? point.x : fallback.x),
-    y: clamp(Number.isFinite(point?.y) ? point.y : fallback.y),
-    vx: clamp(Number.isFinite(point?.vx) ? point.vx : 0, -4, 4),
-    vy: clamp(Number.isFinite(point?.vy) ? point.vy : 0, -4, 4),
-    visible: Boolean(point?.visible)
-  };
-}
-
-function normalizePose(data) {
-  const pose = emptyPose();
-  for (const name of POINT_NAMES) pose[name] = normalizePoint(data?.[name], pose[name]);
-  pose.detected = Boolean(data?.detected);
-  pose.receivedAt = performance.now();
-  pose.sequence = Number(data?.sequence || 0);
-  pose.processingMs = Number(data?.processingMs || 0);
-  pose.sourceIntervalMs = Number(data?.sourceIntervalMs || 0);
-  return pose;
+  handFrames = handInput.sample(now);
+  motion = handFrames.visual;
+  collision = handFrames.collision;
 }
 
 function resize() {
@@ -192,17 +164,15 @@ function drawGoal(context, width, height) {
   context.strokeStyle = 'rgba(255,255,255,.36)';
   context.lineWidth = 1.5;
 
-  const columns = 12;
-  const rows = 7;
-  for (let index = 0; index <= columns; index += 1) {
-    const x = lerp(left, right, index / columns);
+  for (let index = 0; index <= 12; index += 1) {
+    const x = lerp(left, right, index / 12);
     context.beginPath();
     context.moveTo(x, top);
     context.lineTo(x, bottom);
     context.stroke();
   }
-  for (let index = 0; index <= rows; index += 1) {
-    const y = lerp(top, bottom, index / rows);
+  for (let index = 0; index <= 7; index += 1) {
+    const y = lerp(top, bottom, index / 7);
     context.beginPath();
     context.moveTo(left, y);
     context.lineTo(right, y);
@@ -249,17 +219,23 @@ function setState(next) {
 function updateConnection(status) {
   phoneConnected = Boolean(status.phone);
   connectionBadge.textContent = phoneConnected
-    ? (transportMode === 'direct' ? 'TURBO ESTÁVEL direto' : 'Celular conectado')
+    ? (transportMode === 'direct' ? 'Mãos universais • direto' : 'Celular conectado')
     : 'Aguardando celular';
   connectionBadge.className = `badge ${phoneConnected ? 'online' : 'waiting'}`;
 
   if (!phoneConnected) {
     clearInterval(countdownTimer);
     countdownTimer = null;
-    setState('pairing');
-    target = emptyPose();
-    motion = emptyPose();
+    handInput.reset();
+    handFrames = handInput.sample();
+    motion = handFrames.visual;
+    collision = handFrames.collision;
+    previousCollision = {
+      left: { ...collision.left },
+      right: { ...collision.right }
+    };
     shots = [];
+    setState('pairing');
     return;
   }
 
@@ -272,14 +248,14 @@ socket.on('transport', ({ mode, rtt = 0 }) => {
   transportMode = mode;
   if (rtt) transportRtt = rtt;
   if (phoneConnected) {
-    connectionBadge.textContent = mode === 'direct' ? 'TURBO ESTÁVEL direto' : 'Modo servidor';
+    connectionBadge.textContent = mode === 'direct' ? 'Mãos universais • direto' : 'Modo servidor';
     connectionBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
   }
 });
 socket.on('pose', (data) => {
-  target = normalizePose(data);
+  const frames = handInput.ingest(data);
   posePackets += 1;
-  if (state !== 'playing' && state !== 'countdown') motionCursor.updatePose(data);
+  if (state !== 'playing' && state !== 'countdown') motionCursor.updatePose(frames.visual);
 });
 
 setInterval(async () => {
@@ -302,9 +278,8 @@ document.querySelector('#fullscreenButton').addEventListener('click', async () =
 });
 restartButton.addEventListener('click', startCountdown);
 
-function bodyReady(now) {
-  const fresh = now - target.receivedAt < POSE_TIMEOUT_MS;
-  return fresh && target.detected && target.left.visible && target.right.visible;
+function bodyReady() {
+  return motion.fresh && motion.detected && motion.left.visible && motion.right.visible;
 }
 
 function handsRaised(pose) {
@@ -314,12 +289,12 @@ function handsRaised(pose) {
 }
 
 function handleCalibration(now) {
-  const ready = bodyReady(now);
-  const raised = ready && handsRaised(target);
+  const ready = bodyReady();
+  const raised = ready && handsRaised(motion);
   if (!raised) {
     calibrationStartedAt = 0;
     calibrationProgress.style.width = '0%';
-    calibrationMessage.textContent = !target.detected
+    calibrationMessage.textContent = !motion.detected
       ? 'Procurando o goleiro…'
       : !ready
         ? 'Mostre as duas mãos…'
@@ -330,7 +305,7 @@ function handleCalibration(now) {
   if (!calibrationStartedAt) calibrationStartedAt = now;
   const progress = Math.min(1, (now - calibrationStartedAt) / 1050);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
-  calibrationMessage.textContent = progress < 0.55 ? 'Posição perfeita!' : 'Luvas prontas!';
+  calibrationMessage.textContent = progress < 0.55 ? 'Perfil universal reconhecido!' : 'Luvas prontas!';
   if (progress >= 1) startCountdown();
 }
 
@@ -568,12 +543,12 @@ function updateGame(now, dt, width, height) {
     updateShotPosition(shot, now);
     if (shot.state !== 'flying') continue;
 
-    if (handBlocksShot(shot, previousHands.left, motion.left, width, height)) {
-      saveShot(shot, motion.left, now, width, height);
+    if (handBlocksShot(shot, previousCollision.left, collision.left, width, height)) {
+      saveShot(shot, collision.left, now, width, height);
       continue;
     }
-    if (handBlocksShot(shot, previousHands.right, motion.right, width, height)) {
-      saveShot(shot, motion.right, now, width, height);
+    if (handBlocksShot(shot, previousCollision.right, collision.right, width, height)) {
+      saveShot(shot, collision.right, now, width, height);
       continue;
     }
     if (shot.progress >= 1) concedeGoal(shot, now, width, height);
@@ -604,50 +579,6 @@ function updateEffects(dt) {
     text.life -= seconds * 1.65;
   }
   floatingTexts = floatingTexts.filter((text) => text.life > 0);
-}
-
-function updateMotion(now, dt) {
-  const fresh = now - target.receivedAt < POSE_TIMEOUT_MS;
-  previousHands.left = { ...motion.left };
-  previousHands.right = { ...motion.right };
-
-  for (const name of POINT_NAMES) {
-    const source = target[name];
-    const current = motion[name];
-    const visible = Boolean(fresh && target.detected && source.visible);
-    current.visible = visible;
-    if (!visible) continue;
-
-    const isWrist = WRIST_NAMES.has(name);
-    const speed = Math.hypot(source.vx, source.vy);
-    const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);
-    const lead = isWrist && speed > 0.35 ? Math.min(0.024, 0.006 + packetAge) : 0;
-    const desiredX = clamp(source.x + source.vx * lead * 0.45);
-    const desiredY = clamp(source.y + source.vy * lead * 0.45);
-    const distance = Math.hypot(desiredX - current.x, desiredY - current.y);
-
-    if (isWrist) {
-      const movementThreshold = speed < 0.14
-        ? Math.max(0.0032, sessionDeadZone)
-        : speed < 0.38
-          ? Math.max(0.0018, sessionDeadZone * 0.45)
-          : 0.0008;
-      if (!motion.detected || distance > movementThreshold) {
-        current.x = desiredX;
-        current.y = desiredY;
-      }
-    } else {
-      const seconds = Math.max(1 / 120, dt / 1000);
-      const alpha = 1 - Math.exp(-seconds / 0.04);
-      current.x += (desiredX - current.x) * alpha;
-      current.y += (desiredY - current.y) * alpha;
-    }
-
-    current.vx = source.vx;
-    current.vy = source.vy;
-  }
-
-  motion.detected = Boolean(fresh && target.detected);
 }
 
 function handleRestartGesture(now) {
@@ -797,7 +728,7 @@ function frame(now) {
   const dt = Math.min(40, now - lastFrame);
   lastFrame = now;
 
-  updateMotion(now, dt);
+  refreshHands(now);
   drawBackground(width, height, now);
 
   if (state === 'calibrating') handleCalibration(now);
@@ -824,9 +755,9 @@ function frame(now) {
     poseRate = posePackets;
     posePackets = 0;
     poseRateWindow = now;
-    poseValue.textContent = target.detected
-      ? `detectada • ${poseRate}/s • IA ${target.processingMs} ms`
-      : 'não detectada';
+    poseValue.textContent = motion.detected
+      ? `mãos universais • ${poseRate}/s • IA ${motion.processingMs} ms`
+      : 'mãos não detectadas';
     networkValue.textContent = `${transportMode === 'direct' ? 'Direto' : 'Servidor'} • ${transportRtt || '--'} ms • ${poseRate}/s`;
   }
 
