@@ -6,18 +6,18 @@ import {
   saveUniversalHandProfile
 } from './hand-profile.js';
 import {
-  FilesetResolver,
-  PoseLandmarker
-} from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm';
+  HAND_PROFILE_SCOPE,
+  HAND_PROFILE_VERSION,
+  HAND_SYSTEM_CONFIG,
+  MEDIAPIPE_TASKS_VERSION
+} from './hand-system-config.js';
 
-const TASKS_VERSION = '0.10.35';
-const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/+esm`;
-const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/wasm`;
-const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
-const CALIBRATION_HOLD_MS = 2800;
-const MIN_CALIBRATION_SAMPLES = 24;
-const POSE_INTERVAL_MS = 110;
+const CAMERA = HAND_SYSTEM_CONFIG.camera;
+const DETECTOR = HAND_SYSTEM_CONFIG.detector;
+const SCHEDULER = HAND_SYSTEM_CONFIG.scheduler;
+const CALIBRATION = HAND_SYSTEM_CONFIG.calibration;
+const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
 
 const socket = new RealtimeClient();
 const roomInput = document.querySelector('#roomInput');
@@ -44,7 +44,7 @@ let pipelineMode = 'loading';
 let workerDelegate = '';
 let handBusy = false;
 let switchingToMain = false;
-let targetHandRate = 24;
+let targetHandRate = SCHEDULER.defaultHandRate;
 let nextHandAt = 0;
 let lastPoseRunAt = 0;
 let running = false;
@@ -61,6 +61,7 @@ let sessionKeeper = null;
 let latestSnapshot = null;
 let latestHandInferenceMs = 0;
 let latestPoseInferenceMs = 0;
+let visionModulePromise = null;
 let latestShoulders = {
   detected: false,
   receivedAt: 0,
@@ -133,28 +134,35 @@ function visibleHands(snapshot = latestSnapshot) {
 }
 
 function shouldersFresh(now) {
-  return latestShoulders.detected && now - latestShoulders.receivedAt <= 360;
+  return latestShoulders.detected
+    && now - latestShoulders.receivedAt <= SCHEDULER.shoulderFreshnessMs;
 }
 
 function handsAreRaised(hands, now) {
-  if (hands.length !== 2 || !shouldersFresh(now)) return false;
+  if (hands.length !== DETECTOR.numberOfHands || !shouldersFresh(now)) return false;
   const shoulderY = Math.min(latestShoulders.left.y, latestShoulders.right.y);
-  return hands.every((hand) => hand.visual.y < shoulderY + 0.015);
+  return hands.every((hand) => hand.visual.y < shoulderY + CALIBRATION.raisedShoulderTolerance);
 }
 
 function handsAreOpenAndStill(hands) {
-  if (hands.length !== 2) return false;
+  if (hands.length !== DETECTOR.numberOfHands) return false;
   const separation = Math.hypot(
     hands[0].visual.x - hands[1].visual.x,
     hands[0].visual.y - hands[1].visual.y
   );
   const averageScale = mean(hands.map((hand) => hand.scale));
-  const open = hands.every((hand) => hand.openness >= 0.26);
+  const open = hands.every((hand) => hand.openness >= CALIBRATION.minimumOpenness);
   const still = hands.every((hand) => {
     const speed = Math.hypot(hand.velocity.x, hand.velocity.y);
-    return speed <= Math.max(0.13, hand.scale * 1.75);
+    return speed <= Math.max(
+      CALIBRATION.maximumStillSpeed,
+      hand.scale * CALIBRATION.stillSpeedScaleMultiplier
+    );
   });
-  return open && still && separation >= Math.max(0.13, averageScale * 1.35);
+  return open && still && separation >= Math.max(
+    CALIBRATION.minimumSeparation,
+    averageScale * CALIBRATION.separationScaleMultiplier
+  );
 }
 
 function makeHandProfile(index) {
@@ -164,18 +172,34 @@ function makeHandProfile(index) {
   return {
     jitter,
     scale,
-    restRadius: clamp(Math.max(jitter * 3.1, scale * 0.009), 0.0010, 0.015),
-    minCutoff: clamp(1.48 - relativeNoise * 5.0, 0.82, 1.48),
-    beta: clamp(0.17 + relativeNoise * 0.95, 0.17, 0.31),
-    derivativeCutoff: 1.0
+    restRadius: clamp(
+      Math.max(
+        jitter * CALIBRATION.jitterRestMultiplier,
+        scale * CALIBRATION.palmScaleRestMultiplier
+      ),
+      CALIBRATION.restRadiusMinimum,
+      CALIBRATION.restRadiusMaximum
+    ),
+    minCutoff: clamp(
+      CALIBRATION.minimumCutoffBase
+        - relativeNoise * CALIBRATION.minimumCutoffNoiseMultiplier,
+      CALIBRATION.minimumCutoffFloor,
+      CALIBRATION.minimumCutoffBase
+    ),
+    beta: clamp(
+      CALIBRATION.betaBase + relativeNoise * CALIBRATION.betaNoiseMultiplier,
+      CALIBRATION.betaBase,
+      CALIBRATION.betaMaximum
+    ),
+    derivativeCutoff: CALIBRATION.derivativeCutoff
   };
 }
 
 function completeCalibration() {
   const profile = saveUniversalHandProfile({
-    version: 1,
-    scope: 'universal-two-hand',
-    engine: `mediapipe-hand-landmarker-${TASKS_VERSION}`,
+    version: HAND_PROFILE_VERSION,
+    scope: HAND_PROFILE_SCOPE,
+    engine: `mediapipe-hand-landmarker-${MEDIAPIPE_TASKS_VERSION}`,
     createdAt: Date.now(),
     hands: [makeHandProfile(0), makeHandProfile(1)],
     device: {
@@ -196,11 +220,10 @@ function updateUniversalCalibration(snapshot, now) {
   if (calibration.ready) return;
 
   const hands = visibleHands(snapshot);
-  const raised = handsAreRaised(hands, now);
-  if (!raised) {
+  if (!handsAreRaised(hands, now)) {
     calibration.active = false;
     resetCalibrationSamples();
-    calibration.message = hands.length < 2
+    calibration.message = hands.length < DETECTOR.numberOfHands
       ? 'Mostre as duas mãos para a câmera.'
       : 'Levante as duas mãos para criar o perfil universal.';
     return;
@@ -222,10 +245,12 @@ function updateUniversalCalibration(snapshot, now) {
     if (calibration.scales[index].length > 120) calibration.scales[index].shift();
   });
 
-  calibration.progress = clamp((now - calibration.stableSince) / CALIBRATION_HOLD_MS);
+  calibration.progress = clamp((now - calibration.stableSince) / CALIBRATION.holdMs);
   calibration.message = `Criando perfil universal • ${Math.round(calibration.progress * 100)}%`;
 
-  const enoughSamples = calibration.samples.every((samples) => samples.length >= MIN_CALIBRATION_SAMPLES);
+  const enoughSamples = calibration.samples.every(
+    (samples) => samples.length >= CALIBRATION.minimumSamplesPerHand
+  );
   if (calibration.progress >= 1 && enoughSamples) completeCalibration();
 }
 
@@ -249,16 +274,16 @@ function currentHandPair() {
 }
 
 function currentShouldersForOutput(now) {
-  const fresh = shouldersFresh(now);
-  if (!fresh) {
+  if (!shouldersFresh(now)) {
     return {
       left: hiddenPoint(0.44, 0.35),
       right: hiddenPoint(0.56, 0.35)
     };
   }
 
-  // O perfil é universal, mas pode ser criado na preparação de qualquer jogo.
-  // Enquanto ele está sendo criado, a contagem do jogo permanece bloqueada.
+  // A calibração pode aparecer dentro de qualquer jogo, mas pertence à
+  // plataforma. A contagem fica bloqueada apenas enquanto o perfil universal
+  // está sendo criado.
   if (calibration.active && !calibration.ready) {
     return {
       left: { ...latestShoulders.left, y: 0.01, visible: true },
@@ -294,7 +319,7 @@ function emitCurrentPose(now = performance.now()) {
 
 function updateTrackingUi() {
   const hands = visibleHands();
-  const handQuality = hands.length === 2
+  const handQuality = hands.length === DETECTOR.numberOfHands
     ? mean(hands.map((hand) => clamp(hand.handednessScore || 0.7)))
     : hands.length * 0.35;
   const shoulderQuality = latestShoulders.detected ? 1 : 0;
@@ -304,7 +329,7 @@ function updateTrackingUi() {
 
   if (!calibration.ready) {
     trackingStatus.textContent = calibration.message;
-  } else if (hands.length < 2) {
+  } else if (hands.length < DETECTOR.numberOfHands) {
     trackingStatus.textContent = 'Perfil universal ativo • mostre as duas mãos.';
   } else {
     const pipeline = pipelineMode === 'worker'
@@ -317,9 +342,20 @@ function updateTrackingUi() {
 }
 
 function updateAdaptiveRate(inferenceMs) {
-  const next = inferenceMs <= 22 ? 30 : inferenceMs <= 34 ? 24 : inferenceMs <= 52 ? 18 : 12;
+  const rates = SCHEDULER.handRates;
+  const thresholds = SCHEDULER.inferenceThresholdsMs;
+  const next = inferenceMs <= thresholds[0]
+    ? rates[0]
+    : inferenceMs <= thresholds[1]
+      ? rates[1]
+      : inferenceMs <= thresholds[2]
+        ? rates[2]
+        : rates[3];
+
   if (next < targetHandRate) targetHandRate = next;
-  else if (next > targetHandRate && inferenceMs < (1000 / targetHandRate) * 0.62) targetHandRate = next;
+  else if (next > targetHandRate && inferenceMs < (1000 / targetHandRate) * 0.62) {
+    targetHandRate = next;
+  }
 }
 
 function handleHandResult(result, timestampMs, inferenceMs) {
@@ -355,8 +391,16 @@ function handleWorkerMessage(event) {
   }
   if (message.type === 'frame-error') {
     handBusy = false;
-    nextHandAt = performance.now() + 1000 / Math.max(12, targetHandRate);
+    nextHandAt = performance.now() + 1000 / Math.max(
+      SCHEDULER.handRates.at(-1),
+      targetHandRate
+    );
   }
+}
+
+async function loadVisionModule() {
+  visionModulePromise ??= import(TASKS_MODULE);
+  return visionModulePromise;
 }
 
 async function initializeWorkerPipeline() {
@@ -373,7 +417,10 @@ async function initializeWorkerPipeline() {
   await new Promise((resolve, reject) => {
     workerReadyResolve = resolve;
     workerReadyReject = reject;
-    const timeout = setTimeout(() => reject(new Error('Tempo esgotado ao iniciar o worker.')), 15000);
+    const timeout = setTimeout(
+      () => reject(new Error('Tempo esgotado ao iniciar o worker.')),
+      SCHEDULER.workerInitializationTimeoutMs
+    );
     const originalResolve = workerReadyResolve;
     const originalReject = workerReadyReject;
     workerReadyResolve = () => {
@@ -389,15 +436,15 @@ async function initializeWorkerPipeline() {
 }
 
 async function createMainHandLandmarker() {
-  const { HandLandmarker } = await import(TASKS_MODULE);
+  const { FilesetResolver, HandLandmarker } = await loadVisionModule();
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   const create = (delegate) => HandLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: HAND_MODEL, delegate },
+    baseOptions: { modelAssetPath: DETECTOR.handModel, delegate },
     runningMode: 'VIDEO',
-    numHands: 2,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5
+    numHands: DETECTOR.numberOfHands,
+    minHandDetectionConfidence: DETECTOR.minimumDetectionConfidence,
+    minHandPresenceConfidence: DETECTOR.minimumPresenceConfidence,
+    minTrackingConfidence: DETECTOR.minimumTrackingConfidence
   });
   try {
     return await create('GPU');
@@ -436,14 +483,15 @@ async function initializeHandPipeline() {
 }
 
 async function createPoseLandmarker() {
+  const { FilesetResolver, PoseLandmarker } = await loadVisionModule();
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   const create = (delegate) => PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: POSE_MODEL, delegate },
+    baseOptions: { modelAssetPath: DETECTOR.poseModel, delegate },
     runningMode: 'VIDEO',
     numPoses: 1,
-    minPoseDetectionConfidence: 0.48,
-    minPosePresenceConfidence: 0.48,
-    minTrackingConfidence: 0.52,
+    minPoseDetectionConfidence: DETECTOR.poseDetectionConfidence,
+    minPosePresenceConfidence: DETECTOR.posePresenceConfidence,
+    minTrackingConfidence: DETECTOR.poseTrackingConfidence,
     outputSegmentationMasks: false
   });
   try {
@@ -462,12 +510,15 @@ async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: 'user',
-      width: { ideal: 360 },
-      height: { ideal: 640 },
-      aspectRatio: { ideal: 9 / 16 },
-      frameRate: { ideal: 60, max: 60 },
-      resizeMode: 'crop-and-scale'
+      facingMode: CAMERA.facingMode,
+      width: { ideal: CAMERA.idealWidth },
+      height: { ideal: CAMERA.idealHeight },
+      aspectRatio: { ideal: CAMERA.idealAspectRatio },
+      frameRate: {
+        ideal: CAMERA.idealFrameRate,
+        max: CAMERA.maximumFrameRate
+      },
+      resizeMode: CAMERA.resizeMode
     }
   });
 
@@ -478,7 +529,12 @@ async function startCamera() {
 }
 
 function updateShoulders(now) {
-  if (!poseLandmarker || now - lastPoseRunAt < POSE_INTERVAL_MS || video.readyState < 2) return;
+  if (
+    !poseLandmarker
+    || now - lastPoseRunAt < SCHEDULER.shoulderIntervalMs
+    || video.readyState < 2
+  ) return;
+
   lastPoseRunAt = now;
   const startedAt = performance.now();
   const result = poseLandmarker.detectForVideo(video, Math.round(now));
@@ -486,7 +542,7 @@ function updateShoulders(now) {
   const pose = result.landmarks?.[0];
 
   if (!pose) {
-    if (now - lastPoseAt > 320) {
+    if (now - lastPoseAt > SCHEDULER.shoulderLostAfterMs) {
       latestShoulders.detected = false;
       latestShoulders.left.visible = false;
       latestShoulders.right.visible = false;
@@ -576,7 +632,7 @@ function processFrame(now, metadata) {
       }
     }
 
-    if (!latestSnapshot && now - missingPoseSentAt >= 120) {
+    if (!latestSnapshot && now - missingPoseSentAt >= SCHEDULER.emptyFrameIntervalMs) {
       emitCurrentPose(now);
       missingPoseSentAt = now;
     }
@@ -593,7 +649,9 @@ function processFrame(now, metadata) {
 socket.on('transport', ({ mode }) => {
   transportMode = mode;
   if (!running) return;
-  sensorBadge.textContent = mode === 'direct' ? `PERFIL UNIVERSAL • ${room}` : `Servidor • ${room}`;
+  sensorBadge.textContent = mode === 'direct'
+    ? `PERFIL UNIVERSAL • ${room}`
+    : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
@@ -606,7 +664,6 @@ function applyTvStatus({ tv } = {}) {
 }
 
 socket.on('room-status', applyTvStatus);
-
 socket.on('disconnect', () => {
   if (!running) return;
   sensorBadge.textContent = `Reconectando • ${room}`;
@@ -628,7 +685,9 @@ startButton.addEventListener('click', async () => {
   try {
     await socket.connect();
     const joinResult = await socket.request('join', { room, role: 'phone' });
-    if (!joinResult?.ok) throw new Error(joinResult?.error || 'Não foi possível entrar na sala.');
+    if (!joinResult?.ok) {
+      throw new Error(joinResult?.error || 'Não foi possível entrar na sala.');
+    }
 
     await Promise.all([
       initializeHandPipeline(),
@@ -639,7 +698,9 @@ startButton.addEventListener('click', async () => {
     joinPanel.classList.add('hidden');
     cameraPanel.classList.remove('hidden');
     roomValue.textContent = room;
-    sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
+    sensorBadge.textContent = joinResult.status?.tv
+      ? `TV conectada • ${room}`
+      : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     trackingStatus.textContent = calibration.ready
       ? 'Perfil universal carregado. Olhe para a TV.'
@@ -658,7 +719,6 @@ startButton.addEventListener('click', async () => {
       }
     });
     sessionKeeper.start();
-
     schedulePrediction();
   } catch (error) {
     console.error(error);
