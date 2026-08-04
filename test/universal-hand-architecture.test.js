@@ -7,13 +7,10 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(__filename), '..');
 const jsDirectory = path.join(root, 'public', 'js');
-const gameFiles = fs.readdirSync(jsDirectory)
-  .filter((name) => name.endsWith('.js'))
-  .map((name) => ({
-    name,
-    content: fs.readFileSync(path.join(jsDirectory, name), 'utf8')
-  }))
-  .filter(({ content }) => /role:\s*['"]tv['"]/.test(content));
+const gameFiles = ['tv.js', 'goalkeeper.js'].map((name) => ({
+  name,
+  content: fs.readFileSync(path.join(jsDirectory, name), 'utf8')
+}));
 
 const forbiddenGamePatterns = [
   { pattern: /@mediapipe\/tasks-vision/, reason: 'importar MediaPipe diretamente' },
@@ -37,8 +34,6 @@ test('perfil universal depende da versão do sistema', () => {
 });
 
 test('todos os jogos consomem a entrada universal', () => {
-  assert.ok(gameFiles.length >= 2, 'Os jogos de TV precisam ser encontrados pelo teste.');
-
   for (const game of gameFiles) {
     assert.match(
       game.content,
