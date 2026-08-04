@@ -2,6 +2,10 @@ import { RealtimeClient } from './realtime.js';
 import { SessionKeeper } from './session-keeper.js';
 import { HandTrackingCore } from './hand-tracking-core.js';
 import {
+  loadUniversalHandProfile,
+  saveUniversalHandProfile
+} from './hand-profile.js';
+import {
   FilesetResolver,
   PoseLandmarker
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm';
@@ -11,7 +15,6 @@ const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TAS
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/wasm`;
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
-const PROFILE_KEY = 'mexemundo-game-hand-profile-v1';
 const CALIBRATION_HOLD_MS = 2800;
 const MIN_CALIBRATION_SAMPLES = 24;
 const POSE_INTERVAL_MS = 110;
@@ -65,16 +68,18 @@ let latestShoulders = {
   right: hiddenPoint(0.56, 0.35)
 };
 
-const storedProfile = loadProfile();
+const storedProfile = loadUniversalHandProfile();
 const handCore = new HandTrackingCore({ mirrorX: true, calibration: storedProfile });
 const calibration = {
-  ready: false,
+  ready: Boolean(storedProfile),
   active: false,
   stableSince: 0,
-  progress: 0,
+  progress: storedProfile ? 1 : 0,
   samples: [[], []],
   scales: [[], []],
-  message: 'Entre em um jogo e levante as duas mãos.'
+  message: storedProfile
+    ? 'Perfil universal das duas mãos carregado.'
+    : 'Entre em um jogo e levante as duas mãos.'
 };
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
@@ -114,25 +119,6 @@ function rms(points) {
 
 function hiddenPoint(x, y) {
   return { x, y, vx: 0, vy: 0, visible: false };
-}
-
-function loadProfile() {
-  try {
-    const raw = localStorage.getItem(PROFILE_KEY);
-    if (!raw) return null;
-    const profile = JSON.parse(raw);
-    return profile?.version === 1 && Array.isArray(profile.hands) ? profile : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveProfile(profile) {
-  try {
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  } catch {
-    // O perfil continua válido nesta sessão mesmo se o armazenamento estiver indisponível.
-  }
 }
 
 function resetCalibrationSamples() {
@@ -186,8 +172,10 @@ function makeHandProfile(index) {
 }
 
 function completeCalibration() {
-  const profile = {
+  const profile = saveUniversalHandProfile({
     version: 1,
+    scope: 'universal-two-hand',
+    engine: `mediapipe-hand-landmarker-${TASKS_VERSION}`,
     createdAt: Date.now(),
     hands: [makeHandProfile(0), makeHandProfile(1)],
     device: {
@@ -196,16 +184,15 @@ function completeCalibration() {
       width: video.videoWidth,
       height: video.videoHeight
     }
-  };
-  saveProfile(profile);
+  });
   handCore.applyCalibration(profile);
   calibration.ready = true;
   calibration.active = false;
   calibration.progress = 1;
-  calibration.message = 'Rastreamento das duas mãos pronto. Continue com as mãos levantadas.';
+  calibration.message = 'Perfil universal pronto para todos os jogos.';
 }
 
-function updateGameCalibration(snapshot, now) {
+function updateUniversalCalibration(snapshot, now) {
   if (calibration.ready) return;
 
   const hands = visibleHands(snapshot);
@@ -215,7 +202,7 @@ function updateGameCalibration(snapshot, now) {
     resetCalibrationSamples();
     calibration.message = hands.length < 2
       ? 'Mostre as duas mãos para a câmera.'
-      : 'Entre no jogo e levante as duas mãos.';
+      : 'Levante as duas mãos para criar o perfil universal.';
     return;
   }
 
@@ -236,7 +223,7 @@ function updateGameCalibration(snapshot, now) {
   });
 
   calibration.progress = clamp((now - calibration.stableSince) / CALIBRATION_HOLD_MS);
-  calibration.message = `Ajustando as duas mãos • ${Math.round(calibration.progress * 100)}%`;
+  calibration.message = `Criando perfil universal • ${Math.round(calibration.progress * 100)}%`;
 
   const enoughSamples = calibration.samples.every((samples) => samples.length >= MIN_CALIBRATION_SAMPLES);
   if (calibration.progress >= 1 && enoughSamples) completeCalibration();
@@ -270,9 +257,8 @@ function currentShouldersForOutput(now) {
     };
   }
 
-  // Enquanto o treinamento dentro do jogo está acontecendo, os ombros são
-  // mantidos acima da tela. Assim os jogos não iniciam a contagem antes do
-  // perfil bilateral estar realmente pronto.
+  // O perfil é universal, mas pode ser criado na preparação de qualquer jogo.
+  // Enquanto ele está sendo criado, a contagem do jogo permanece bloqueada.
   if (calibration.active && !calibration.ready) {
     return {
       left: { ...latestShoulders.left, y: 0.01, visible: true },
@@ -319,11 +305,11 @@ function updateTrackingUi() {
   if (!calibration.ready) {
     trackingStatus.textContent = calibration.message;
   } else if (hands.length < 2) {
-    trackingStatus.textContent = 'Mostre as duas mãos para continuar jogando.';
+    trackingStatus.textContent = 'Perfil universal ativo • mostre as duas mãos.';
   } else {
     const pipeline = pipelineMode === 'worker'
-      ? `duas mãos em segundo plano${workerDelegate ? ` • ${workerDelegate}` : ''}`
-      : 'duas mãos em modo compatível';
+      ? `perfil universal • segundo plano${workerDelegate ? ` • ${workerDelegate}` : ''}`
+      : 'perfil universal • modo compatível';
     trackingStatus.textContent = `${pipeline} • olhe para a TV!`;
   }
 
@@ -340,7 +326,7 @@ function handleHandResult(result, timestampMs, inferenceMs) {
   latestHandInferenceMs = Number(inferenceMs || 0);
   updateAdaptiveRate(latestHandInferenceMs);
   latestSnapshot = handCore.ingest(result, timestampMs);
-  updateGameCalibration(latestSnapshot, timestampMs);
+  updateUniversalCalibration(latestSnapshot, timestampMs);
   updateTrackingUi();
   emitCurrentPose(performance.now());
 }
@@ -437,7 +423,7 @@ async function switchToMainHandPipeline() {
 }
 
 async function initializeHandPipeline() {
-  trackingStatus.textContent = 'Carregando rastreamento das duas mãos…';
+  trackingStatus.textContent = 'Carregando rastreamento universal das duas mãos…';
   try {
     await initializeWorkerPipeline();
   } catch (error) {
@@ -607,14 +593,14 @@ function processFrame(now, metadata) {
 socket.on('transport', ({ mode }) => {
   transportMode = mode;
   if (!running) return;
-  sensorBadge.textContent = mode === 'direct' ? `DUAS MÃOS • ${room}` : `Servidor • ${room}`;
+  sensorBadge.textContent = mode === 'direct' ? `PERFIL UNIVERSAL • ${room}` : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
 function applyTvStatus({ tv } = {}) {
   if (!running) return;
   sensorBadge.textContent = tv
-    ? `${transportMode === 'direct' ? 'DUAS MÃOS' : 'TV conectada'} • ${room}`
+    ? `${transportMode === 'direct' ? 'PERFIL UNIVERSAL' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
 }
@@ -637,7 +623,7 @@ startButton.addEventListener('click', async () => {
   }
 
   startButton.disabled = true;
-  startButton.textContent = 'Preparando as duas mãos…';
+  startButton.textContent = 'Preparando perfil universal…';
 
   try {
     await socket.connect();
@@ -655,7 +641,9 @@ startButton.addEventListener('click', async () => {
     roomValue.textContent = room;
     sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
-    trackingStatus.textContent = 'Entre no jogo e levante as duas mãos para ajustar.';
+    trackingStatus.textContent = calibration.ready
+      ? 'Perfil universal carregado. Olhe para a TV.'
+      : 'Levante as duas mãos para criar o perfil universal.';
     running = true;
 
     sessionKeeper?.stop();
