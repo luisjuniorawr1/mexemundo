@@ -1,15 +1,17 @@
-export const HAND_SYSTEM_VERSION = '1.0.0';
-export const HAND_PROFILE_VERSION = 1;
+export const HAND_SYSTEM_VERSION = '1.1.0';
+export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
-export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v1';
-export const MEDIAPIPE_TASKS_VERSION = '0.10.35';
+export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
+export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
     inputVersion: 1,
     profileVersion: HAND_PROFILE_VERSION,
-    profileScope: HAND_PROFILE_SCOPE
+    profileScope: HAND_PROFILE_SCOPE,
+    referenceVersion: '0.6.0',
+    productionEngine: 'pose-landmarker-lite-single-pass'
   },
   camera: {
     facingMode: 'user',
@@ -23,37 +25,70 @@ const config = {
   detector: {
     tasksVersion: MEDIAPIPE_TASKS_VERSION,
     numberOfHands: 2,
+    poseDetectionConfidence: 0.5,
+    posePresenceConfidence: 0.5,
+    poseTrackingConfidence: 0.55,
+    pointVisibilityConfidence: 0.3,
+    poseModel: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+
+    // Mantidos para os laboratorios de pesquisa. Nao sao carregados na producao.
     minimumDetectionConfidence: 0.5,
     minimumPresenceConfidence: 0.5,
     minimumTrackingConfidence: 0.5,
-    poseDetectionConfidence: 0.48,
-    posePresenceConfidence: 0.48,
-    poseTrackingConfidence: 0.52,
-    handModel: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-    poseModel: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task'
+    handModel: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+  },
+  filter: {
+    wristVelocityBlend: 0.38,
+    bodyVelocityBlend: 0.24,
+    wristRestSpeed: 0.12,
+    wristMoveSpeed: 0.35,
+    wristRestDeadZone: 0.0032,
+    wristMoveDeadZone: 0.0016,
+    wristFastDeadZone: 0.0007,
+    wristBaseAlpha: 0.18,
+    wristAlphaRange: 0.76,
+    wristMovementStart: 0.07,
+    wristMovementRange: 0.95,
+    wristDisplacementRange: 0.045,
+    wristSnapDistance: 0.075,
+    wristSnapSpeed: 1.35,
+    bodyDeadZone: 0.0016,
+    bodyBaseAlpha: 0.20,
+    bodyDistanceGain: 5,
+    bodyMaximumAlpha: 0.72,
+    filteredVelocityBlend: 0.35,
+    idleVelocityDecay: 0.72
+  },
+  startupCheck: {
+    holdMs: 1400,
+    maximumStillSpeed: 0.18,
+    minimumHandSeparation: 0.16,
+    requireShoulders: true
   },
   scheduler: {
+    poseFreshnessMs: 260,
+    emptyFrameIntervalMs: 100,
+
+    // Compatibilidade com modulos de pesquisa antigos.
     defaultHandRate: 24,
     handRates: [30, 24, 18, 12],
     inferenceThresholdsMs: [22, 34, 52],
     shoulderIntervalMs: 110,
     shoulderFreshnessMs: 360,
     shoulderLostAfterMs: 320,
-    emptyFrameIntervalMs: 120,
     workerInitializationTimeoutMs: 15000,
     maximumMissingHandMs: 180,
-    reacquireResetMs: 260,
-    poseFreshnessMs: 260
+    reacquireResetMs: 260
   },
   calibration: {
-    holdMs: 2800,
-    minimumSamplesPerHand: 24,
-    minimumOpenness: 0.26,
-    maximumStillSpeed: 0.13,
-    stillSpeedScaleMultiplier: 1.75,
-    minimumSeparation: 0.13,
-    separationScaleMultiplier: 1.35,
-    raisedShoulderTolerance: 0.015,
+    holdMs: 1400,
+    minimumSamplesPerHand: 20,
+    minimumOpenness: 0,
+    maximumStillSpeed: 0.18,
+    stillSpeedScaleMultiplier: 1,
+    minimumSeparation: 0.16,
+    separationScaleMultiplier: 1,
+    raisedShoulderTolerance: 0.02,
     jitterRestMultiplier: 3.1,
     palmScaleRestMultiplier: 0.009,
     restRadiusMinimum: 0.001,
@@ -68,9 +103,9 @@ const config = {
   },
   output: {
     velocityMinimumForPrediction: 0.35,
-    maximumVisualPredictionMs: 10,
-    maximumCollisionPredictionMs: 24,
-    maximumPacketAgePredictionMs: 25
+    maximumVisualPredictionMs: 0,
+    maximumCollisionPredictionMs: 14,
+    maximumPacketAgePredictionMs: 18
   }
 };
 
@@ -85,15 +120,14 @@ export const HAND_SYSTEM_CONFIG = deepFreeze(config);
 
 export function handSystemFingerprint() {
   const detector = HAND_SYSTEM_CONFIG.detector;
-  const calibration = HAND_SYSTEM_CONFIG.calibration;
+  const filter = HAND_SYSTEM_CONFIG.filter;
   return [
     HAND_SYSTEM_VERSION,
+    HAND_SYSTEM_CONFIG.system.productionEngine,
     detector.tasksVersion,
-    detector.numberOfHands,
-    detector.minimumDetectionConfidence,
-    detector.minimumPresenceConfidence,
-    detector.minimumTrackingConfidence,
-    calibration.holdMs,
-    calibration.minimumSamplesPerHand
+    detector.poseDetectionConfidence,
+    detector.poseTrackingConfidence,
+    filter.wristRestDeadZone,
+    HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
 }
