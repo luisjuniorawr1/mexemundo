@@ -15,13 +15,12 @@ const gameFiles = fs.readdirSync(jsDirectory)
   }))
   .filter(({ content }) => /role:\s*['"]tv['"]/.test(content));
 
-const legacyGamesPendingMigration = new Set(['tv.js', 'goalkeeper.js']);
 const forbiddenGamePatterns = [
   { pattern: /@mediapipe\/tasks-vision/, reason: 'importar MediaPipe diretamente' },
   { pattern: /HandLandmarker|PoseLandmarker/, reason: 'instanciar detectores próprios' },
   { pattern: /minHandDetectionConfidence|minHandPresenceConfidence|minTrackingConfidence/, reason: 'definir confiança de rastreamento' },
   { pattern: /localStorage\.(?:getItem|setItem).*hand/i, reason: 'criar perfil de mãos próprio' },
-  { pattern: /new\s+StableTurboPointFilter/, reason: 'criar filtro temporal próprio' }
+  { pattern: /calibratedDeadZone|sessionDeadZone|StableTurboPointFilter/, reason: 'criar filtro ou zona morta própria' }
 ];
 
 test('configuração geral das mãos possui uma única fonte', () => {
@@ -37,10 +36,10 @@ test('perfil universal depende da versão do sistema', () => {
   assert.match(profile, /HAND_SYSTEM_VERSION/);
 });
 
-test('todo jogo novo consome a entrada universal', () => {
-  for (const game of gameFiles) {
-    if (legacyGamesPendingMigration.has(game.name)) continue;
+test('todos os jogos consomem a entrada universal', () => {
+  assert.ok(gameFiles.length >= 2, 'Os jogos de TV precisam ser encontrados pelo teste.');
 
+  for (const game of gameFiles) {
     assert.match(
       game.content,
       /from\s+['"]\.\/game-hand-input\.js['"]/,
@@ -63,4 +62,11 @@ test('somente o núcleo controla o perfil universal', () => {
     || /saveUniversalHandProfile/.test(content)
   ));
   assert.deepEqual(profileOwners, []);
+});
+
+test('jogos separam posição visual e trajetória de colisão', () => {
+  for (const game of gameFiles) {
+    assert.match(game.content, /\.visual/, `${game.name} deve usar a saída visual.`);
+    assert.match(game.content, /\.collision/, `${game.name} deve usar a saída de colisão.`);
+  }
 });
