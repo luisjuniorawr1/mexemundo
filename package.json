@@ -1,12 +1,12 @@
 {
   "name": "mexemundo",
-  "version": "0.10.19",
+  "version": "0.10.20",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/session-keeper.js && node --check public/js/motion-ui.js && node --check public/js/menu.js && node --check public/js/universal-menu-cursor.js && node --check public/js/stable-dwell-activation.js && node --check public/js/single-hand-game-activation.js && node --check public/js/two-hand-startup-check.js && node --check public/js/tv-entry.js && node --check public/js/goalkeeper-entry.js && node --check public/js/tv.js && node --check public/js/goalkeeper.js && node --check public/js/phone.js && node --check public/js/hand-system-config.js && node --check public/js/hand-identity-guard.js && node --check public/js/mexeflow.js && node --check public/js/game-hand-input.js && node --check public/js/pose-gesture.js && node --check public/js/fist-activation.js && node --check public/js/hand-profile.js && node --check public/js/hand-tracking-core.js && node --check public/js/hand-landmarker-worker.js && node --check public/js/hand-lab.js",
+    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/session-keeper.js && node --check public/js/motion-ui.js && node --check public/js/menu.js && node --check public/js/universal-menu-cursor.js && node --check public/js/stable-dwell-activation.js && node --check public/js/single-hand-game-activation.js && node --check public/js/two-hand-startup-check.js && node --check public/js/tv-entry.js && node --check public/js/goalkeeper-entry.js && node --check public/js/tv.js && node --check public/js/goalkeeper.js && node --check public/js/phone.js && node --check public/js/sequential-hand-binder.js && node --check public/js/hand-system-config.js && node --check public/js/hand-identity-guard.js && node --check public/js/mexeflow.js && node --check public/js/game-hand-input.js && node --check public/js/pose-gesture.js && node --check public/js/fist-activation.js && node --check public/js/hand-profile.js && node --check public/js/hand-tracking-core.js && node --check public/js/hand-landmarker-worker.js && node --check public/js/hand-lab.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {
