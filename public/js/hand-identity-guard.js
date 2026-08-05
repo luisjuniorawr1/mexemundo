@@ -42,6 +42,36 @@ function hiddenPoint(point) {
   };
 }
 
+function copyGroup(group) {
+  if (!group) return null;
+  const points = group.points.map(copyPoint);
+  return {
+    side: group.side,
+    points,
+    wrist: points[0],
+    visible: Boolean(group.visible)
+  };
+}
+
+function trustedGroup(group) {
+  const trusted = copyGroup(group);
+  if (!trusted) return null;
+
+  // O guardião já validou a trajetória. Mantém somente o pulso acima do
+  // limiar do filtro final; os dedos preservam a confiança original.
+  trusted.points[0].visibility = Math.max(
+    trusted.points[0].visibility ?? 0,
+    CONFIG.trustedWristVisibility
+  );
+  trusted.points[0].presence = Math.max(
+    trusted.points[0].presence ?? 0,
+    CONFIG.trustedWristVisibility
+  );
+  trusted.wrist = trusted.points[0];
+  trusted.visible = true;
+  return trusted;
+}
+
 function extractGroup(pose, side) {
   const indices = GROUPS[side];
   const points = indices.map((index) => copyPoint(pose?.[index]));
@@ -65,6 +95,8 @@ class IdentityTrack {
     this.vx = 0;
     this.vy = 0;
     this.lastAt = 0;
+    this.lastAcceptedAt = 0;
+    this.lastGroup = null;
   }
 
   predict(now) {
@@ -84,32 +116,52 @@ class IdentityTrack {
     return predicted ? distance(predicted, mirrored(point)) : 0;
   }
 
-  update(point, now) {
-    const next = mirrored(point);
+  update(group, now) {
+    const next = mirrored(group.wrist);
     if (!this.ready) {
       this.ready = true;
       this.x = next.x;
       this.y = next.y;
       this.vx = 0;
       this.vy = 0;
-      this.lastAt = now;
-      return;
+    } else {
+      const dt = clamp((now - this.lastAt) / 1000, 1 / 120, 0.09);
+      const rawVx = (next.x - this.x) / dt;
+      const rawVy = (next.y - this.y) / dt;
+      this.vx += (rawVx - this.vx) * CONFIG.velocityBlend;
+      this.vy += (rawVy - this.vy) * CONFIG.velocityBlend;
+      this.x = next.x;
+      this.y = next.y;
     }
 
-    const dt = clamp((now - this.lastAt) / 1000, 1 / 120, 0.09);
-    const rawVx = (next.x - this.x) / dt;
-    const rawVy = (next.y - this.y) / dt;
-    this.vx += (rawVx - this.vx) * CONFIG.velocityBlend;
-    this.vy += (rawVy - this.vy) * CONFIG.velocityBlend;
-    this.x = next.x;
-    this.y = next.y;
     this.lastAt = now;
+    this.lastAcceptedAt = now;
+    this.lastGroup = trustedGroup(group);
+  }
+
+  hold(now) {
+    if (
+      !this.lastGroup
+      || !this.lastAcceptedAt
+      || now - this.lastAcceptedAt > CONFIG.measurementGraceMs
+    ) return null;
+    return copyGroup(this.lastGroup);
+  }
+
+  stale(now) {
+    return !this.ready
+      || !this.lastAcceptedAt
+      || now - this.lastAcceptedAt > CONFIG.lostResetMs;
   }
 }
 
 /**
  * Mantém a identidade física das mãos quando elas cruzam, se aproximam ou
  * quando o Pose Landmarker troca temporariamente os lados detectados.
+ *
+ * A identidade informada pelo Pose é a referência principal. Uma troca só é
+ * aceita quando as duas mãos permanecem visíveis e a evidência persiste. Uma
+ * mão isolada nunca rouba o rastro da outra.
  */
 export class HandIdentityGuard {
   constructor() {
@@ -146,6 +198,65 @@ export class HandIdentityGuard {
     return output;
   }
 
+  accept(side, group, now) {
+    const track = this.tracks[side];
+    if (!group) return track.hold(now);
+
+    if (track.stale(now)) {
+      track.reset();
+      track.update(group, now);
+      return track.hold(now);
+    }
+
+    if (track.cost(group.wrist, now) > CONFIG.maximumAcceptedJump) {
+      // Um quadro impossível não apaga a mão nem troca sua identidade.
+      return track.hold(now);
+    }
+
+    track.update(group, now);
+    return track.hold(now);
+  }
+
+  updateAssignment(source, now) {
+    if (!this.tracks.left.ready || !this.tracks.right.ready) {
+      this.assignment = 'direct';
+      this.candidate = 'direct';
+      this.candidateSince = 0;
+      return;
+    }
+
+    const directCost = this.tracks.left.cost(source.left.wrist, now)
+      + this.tracks.right.cost(source.right.wrist, now);
+    const swappedCost = this.tracks.left.cost(source.right.wrist, now)
+      + this.tracks.right.cost(source.left.wrist, now)
+      + CONFIG.sourceLabelBias;
+
+    let proposed = this.assignment;
+    if (swappedCost + CONFIG.switchMargin < directCost) {
+      proposed = 'swapped';
+    } else if (directCost + CONFIG.switchMargin < swappedCost) {
+      proposed = 'direct';
+    }
+
+    if (proposed === this.assignment) {
+      this.candidate = this.assignment;
+      this.candidateSince = 0;
+      return;
+    }
+
+    if (this.candidate !== proposed) {
+      this.candidate = proposed;
+      this.candidateSince = now;
+      return;
+    }
+
+    if (now - this.candidateSince >= CONFIG.switchConfirmMs) {
+      this.assignment = proposed;
+      this.candidate = proposed;
+      this.candidateSince = 0;
+    }
+  }
+
   stabilize(pose, now = performance.now()) {
     if (!Array.isArray(pose)) return pose;
 
@@ -153,96 +264,45 @@ export class HandIdentityGuard {
       left: extractGroup(pose, 'left'),
       right: extractGroup(pose, 'right')
     };
+    const bothVisible = source.left.visible && source.right.visible;
     const anyVisible = source.left.visible || source.right.visible;
-    if (!anyVisible) {
-      if (
-        this.lastResolvedAt
-        && now - this.lastResolvedAt > CONFIG.lostResetMs
-      ) this.reset();
+
+    let proposedLeft = null;
+    let proposedRight = null;
+
+    if (bothVisible) {
+      this.updateAssignment(source, now);
+      if (this.assignment === 'swapped') {
+        proposedLeft = source.right;
+        proposedRight = source.left;
+      } else {
+        proposedLeft = source.left;
+        proposedRight = source.right;
+      }
+    } else if (source.left.visible) {
+      // Uma mão isolada conserva o lado anatômico informado pelo Pose.
+      proposedLeft = source.left;
+      this.candidate = this.assignment;
+      this.candidateSince = 0;
+    } else if (source.right.visible) {
+      proposedRight = source.right;
+      this.candidate = this.assignment;
+      this.candidateSince = 0;
+    }
+
+    const stableLeft = this.accept('left', proposedLeft, now);
+    const stableRight = this.accept('right', proposedRight, now);
+
+    if (stableLeft || stableRight || anyVisible) {
+      this.lastResolvedAt = now;
+    } else if (
+      this.lastResolvedAt
+      && now - this.lastResolvedAt > CONFIG.lostResetMs
+    ) {
+      this.reset();
       return pose;
     }
 
-    let stableLeft = null;
-    let stableRight = null;
-
-    if (source.left.visible && source.right.visible) {
-      if (!this.tracks.left.ready || !this.tracks.right.ready) {
-        stableLeft = source.left;
-        stableRight = source.right;
-        this.assignment = 'direct';
-      } else {
-        const directCost = this.tracks.left.cost(source.left.wrist, now)
-          + this.tracks.right.cost(source.right.wrist, now);
-        const swappedCost = this.tracks.left.cost(source.right.wrist, now)
-          + this.tracks.right.cost(source.left.wrist, now);
-
-        let proposed = this.assignment;
-        if (swappedCost + CONFIG.switchMargin < directCost) {
-          proposed = 'swapped';
-        } else if (directCost + CONFIG.switchMargin < swappedCost) {
-          proposed = 'direct';
-        }
-
-        if (proposed !== this.assignment) {
-          if (this.candidate !== proposed) {
-            this.candidate = proposed;
-            this.candidateSince = now;
-          } else if (now - this.candidateSince >= CONFIG.switchConfirmMs) {
-            this.assignment = proposed;
-          }
-        } else {
-          this.candidate = this.assignment;
-          this.candidateSince = 0;
-        }
-
-        // Uma troca muito clara é corrigida já no quadro atual; trocas
-        // ambíguas perto do cruzamento preservam a identidade anterior.
-        const frameAssignment = Math.abs(directCost - swappedCost)
-          >= CONFIG.emergencySwapAdvantage
-          ? proposed
-          : this.assignment;
-
-        if (frameAssignment === 'swapped') {
-          stableLeft = source.right;
-          stableRight = source.left;
-        } else {
-          stableLeft = source.left;
-          stableRight = source.right;
-        }
-      }
-    } else {
-      const onlyGroup = source.left.visible ? source.left : source.right;
-      const leftCost = this.tracks.left.ready
-        ? this.tracks.left.cost(onlyGroup.wrist, now)
-        : Infinity;
-      const rightCost = this.tracks.right.ready
-        ? this.tracks.right.cost(onlyGroup.wrist, now)
-        : Infinity;
-
-      if (leftCost === Infinity && rightCost === Infinity) {
-        if (onlyGroup.side === 'left') stableLeft = onlyGroup;
-        else stableRight = onlyGroup;
-      } else if (leftCost <= rightCost) {
-        stableLeft = onlyGroup;
-      } else {
-        stableRight = onlyGroup;
-      }
-    }
-
-    const accept = (side, group) => {
-      if (!group) return null;
-      const track = this.tracks[side];
-      if (
-        track.ready
-        && track.cost(group.wrist, now) > CONFIG.maximumAcceptedJump
-      ) return null;
-      track.update(group.wrist, now);
-      return group;
-    };
-
-    stableLeft = accept('left', stableLeft);
-    stableRight = accept('right', stableRight);
-    this.lastResolvedAt = now;
     return this.writeGroups(pose, stableLeft, stableRight);
   }
 }
