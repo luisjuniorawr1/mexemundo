@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.2.1';
+export const HAND_SYSTEM_VERSION = '1.3.0';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,11 +7,12 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 2,
+    inputVersion: 3,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
-    productionEngine: 'pose-landmarker-lite-single-pass'
+    productionEngine: 'pose-landmarker-lite-single-pass',
+    visualResponse: 'mexeflow-v1'
   },
   camera: {
     facingMode: 'user',
@@ -60,30 +61,47 @@ const config = {
     idleVelocityDecay: 0.60
   },
   visual: {
-    restSpeed: 0.18,
-    restDeadZone: 0.0045,
-    movementSpeedRange: 1.10,
-    movementDistanceRange: 0.055,
-    minimumAlpha: 0.16,
-    maximumAlpha: 0.86,
-    snapDistance: 0.085,
+    mode: 'mexeflow-v1',
+    minimumDeltaMs: 4,
+    maximumDeltaMs: 45,
+    restEnterSpeed: 0.16,
+    restExitSpeed: 0.28,
+    restEnterDistance: 0.005,
+    restExitDistance: 0.012,
+    restHoldMs: 90,
+    slowHalfLifeMs: 58,
+    fastHalfLifeMs: 10,
+    fastResponseSpeed: 0.95,
+    fastResponseDistance: 0.06,
+    snapDistance: 0.13,
+    maximumLagDistance: 0.035,
+    lookaheadMs: 7,
+    lookaheadMinimumSpeed: 0.55,
+    maximumLookaheadDistance: 0.012,
     missingGraceMs: 180
   },
   gesture: {
     sideUsedForMenus: 'right',
-    minimumVisibility: 0.24,
-    initialOpenReferenceRatio: 0.16,
-    minimumOpenReferenceRatio: 0.11,
-    maximumOpenReferenceRatio: 0.30,
-    openReferenceRiseAlpha: 0.18,
-    openReferenceFallAlpha: 0.025,
-    fistEnterFraction: 0.56,
-    fistExitFraction: 0.76,
-    minimumFistRatio: 0.045,
-    minimumThresholdGap: 0.018,
-    confirmationMs: 120,
-    releaseMs: 90,
-    unknownAfterMs: 220,
+    minimumVisibility: 0.18,
+    minimumVisibleTips: 2,
+    bootstrapMs: 180,
+    initialOpenReferenceRatio: 0.10,
+    minimumOpenReferenceRatio: 0.055,
+    maximumOpenReferenceRatio: 0.24,
+    openReferenceRiseAlpha: 0.24,
+    openReferenceFallAlpha: 0.035,
+    fistEnterFraction: 0.72,
+    fistExitFraction: 0.88,
+    minimumFistRatio: 0.025,
+    minimumThresholdGap: 0.012,
+    confirmationMs: 110,
+    releaseMs: 80,
+    unknownAfterMs: 260,
+    armOpenness: 0.84,
+    activationOpenness: 0.72,
+    minimumActivationConfidence: 0.08,
+    targetLatchClosure: 0.10,
+    targetReleaseClosure: 0.04,
     clickCooldownMs: 420
   },
   startupCheck: {
@@ -154,12 +172,16 @@ export function handSystemFingerprint() {
   return [
     HAND_SYSTEM_VERSION,
     HAND_SYSTEM_CONFIG.system.productionEngine,
+    HAND_SYSTEM_CONFIG.system.visualResponse,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
     filter.wristRestDeadZone,
-    visual.restDeadZone,
+    visual.mode,
+    visual.restEnterDistance,
+    visual.maximumLagDistance,
     gesture.fistEnterFraction,
+    gesture.minimumVisibleTips,
     HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
 }
