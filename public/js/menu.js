@@ -2,6 +2,7 @@ import { RealtimeClient } from './realtime.js';
 import { createUniversalHandInput } from './game-hand-input.js';
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
 import { UniversalMenuCursor } from './universal-menu-cursor.js';
+import { evaluateTwoHandStartup } from './two-hand-startup-check.js';
 import {
   getPersistentRoom,
   roomHref
@@ -22,7 +23,7 @@ const recalibrateButton = document.querySelector('#recalibrateButton');
 const fullscreenButton = document.querySelector('#fullscreenButton');
 const gameLinks = [...document.querySelectorAll('[data-game-path]')];
 
-const SESSION_KEY = `mexemundo-hand-session-ready-v4:${room}`;
+const SESSION_KEY = `mexemundo-hand-session-ready-v5:${room}`;
 const STARTUP = HAND_SYSTEM_CONFIG.startupCheck;
 
 roomCode.textContent = room;
@@ -48,7 +49,7 @@ function setState(next) {
   cursor.setEnabled(next === 'menu' && phoneConnected);
 }
 
-function resetCalibration(message = 'Mostre uma mão para a câmera.') {
+function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
   stableSince = 0;
   openingMenu = false;
   calibrationProgress.style.width = '0%';
@@ -56,7 +57,7 @@ function resetCalibration(message = 'Mostre uma mão para a câmera.') {
 }
 
 function startCalibration() {
-  resetCalibration('Mostre uma mão e os ombros para a câmera.');
+  resetCalibration('Mostre as duas mãos, uma de cada lado do corpo.');
   setState('calibrating');
 }
 
@@ -68,32 +69,27 @@ function showMenu() {
   if (lastVisualFrame) cursor.updateFrame(lastVisualFrame);
 }
 
-function visibleHands(frame) {
-  return [frame?.left, frame?.right].filter((hand) => hand?.visible);
-}
-
-function handsReady(frame) {
-  if (!frame?.fresh || !frame?.detected) return false;
-  if (visibleHands(frame).length < STARTUP.minimumVisibleHands) return false;
-  if (
-    STARTUP.requireShoulders
-    && (!frame.leftShoulder?.visible || !frame.rightShoulder?.visible)
-  ) return false;
-  return true;
+function messageForStartup(result) {
+  switch (result.reason) {
+    case 'missing-frame':
+      return 'Afaste-se até aparecer a parte superior do corpo.';
+    case 'missing-hands':
+      return 'Mostre as duas mãos ao mesmo tempo.';
+    case 'missing-shoulders':
+      return 'Mantenha os ombros e as duas mãos dentro da câmera.';
+    case 'hands-too-close':
+      return 'Separe um pouco mais as mãos, uma de cada lado.';
+    case 'moving':
+      return 'Duas mãos reconhecidas. Mantenha-as paradas por um instante.';
+    default:
+      return 'Mostre as duas mãos para a câmera.';
+  }
 }
 
 function updateCalibration(frame, now) {
-  const hands = visibleHands(frame);
-  if (!handsReady(frame)) {
-    resetCalibration('Mostre uma mão e os ombros para a câmera.');
-    return;
-  }
-
-  const speed = Math.max(
-    ...hands.map((hand) => Math.hypot(hand.vx ?? 0, hand.vy ?? 0))
-  );
-  if (speed > STARTUP.maximumStillSpeed) {
-    resetCalibration('Mão reconhecida. Mantenha-a parada por um instante.');
+  const result = evaluateTwoHandStartup(frame, STARTUP);
+  if (!result.ready) {
+    resetCalibration(messageForStartup(result));
     return;
   }
 
@@ -101,9 +97,9 @@ function updateCalibration(frame, now) {
   const progress = Math.min(1, (now - stableSince) / STARTUP.holdMs);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
   calibrationMessage.textContent = progress < 0.45
-    ? (hands.length >= 2 ? 'Duas mãos reconhecidas…' : 'Uma mão reconhecida…')
+    ? 'Duas mãos reconhecidas e separadas…'
     : progress < 0.85
-      ? 'Confirmando conexão…'
+      ? 'Fixando os dois rastros…'
       : 'Tudo pronto!';
 
   if (progress >= 1 && !openingMenu) {
