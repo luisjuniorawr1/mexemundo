@@ -44,9 +44,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.14',
+      version: '0.10.15',
       games: ['balloons', 'goalkeeper'],
-      handSystem: 'universal-two-hand-v1.6.1',
+      handSystem: 'universal-two-hand-v1.6.2',
       handInput: 'mexeflow-v2-anti-pull-visual-and-fast-collision',
       handPresence: 'short-dropout-bridge-visual-220ms-collision-80ms',
       gamePostProcessing: 'none',
@@ -58,7 +58,8 @@ const server = http.createServer((req, res) => {
       training: 'once-per-session-not-per-game',
       profile: 'universal-runtime-configuration',
       tracking: 'pose-landmarker-lite-single-pass-reference-0.6.0',
-      identity: 'continuous-two-hand-prediction-guard',
+      identity: 'sticky-anatomical-two-hand-v2-no-single-hand-steal',
+      identityRecovery: 'rejected-measurement-hold-180ms-trusted-wrist',
       visualResponse: 'mexeflow-v2-progressive-catch-up-no-hard-snap',
       gesture: 'not-required-for-interface-selection',
       shoulders: 'same-pose-inference',
