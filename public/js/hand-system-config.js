@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.5.1';
+export const HAND_SYSTEM_VERSION = '1.5.2';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,14 +7,15 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 5,
+    inputVersion: 6,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
     visualResponse: 'mexeflow-v2-anti-pull',
     identityGuard: 'continuous-two-hand-v1',
-    menuActivation: 'stable-dwell-v1'
+    menuActivation: 'stable-dwell-v1',
+    startupVerification: 'strict-two-hand-separated-v1'
   },
   camera: {
     facingMode: 'user',
@@ -31,7 +32,7 @@ const config = {
     poseDetectionConfidence: 0.5,
     posePresenceConfidence: 0.5,
     poseTrackingConfidence: 0.55,
-    pointVisibilityConfidence: 0.3,
+    pointVisibilityConfidence: 0.24,
     poseModel: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
 
     // Mantidos para os laboratórios de pesquisa. Não são carregados na produção.
@@ -135,9 +136,9 @@ const config = {
     clickCooldownMs: 420
   },
   startupCheck: {
-    holdMs: 950,
+    holdMs: 1400,
     maximumStillSpeed: 0.26,
-    minimumVisibleHands: 1,
+    minimumVisibleHands: 2,
     minimumHandSeparation: 0.16,
     requireShoulders: true,
     requireOpenHands: false
@@ -208,9 +209,11 @@ export function handSystemFingerprint() {
     HAND_SYSTEM_CONFIG.system.visualResponse,
     HAND_SYSTEM_CONFIG.system.identityGuard,
     HAND_SYSTEM_CONFIG.system.menuActivation,
+    HAND_SYSTEM_CONFIG.system.startupVerification,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
+    detector.pointVisibilityConfidence,
     identity.switchMargin,
     identity.maximumAcceptedJump,
     filter.wristRestDeadZone,
@@ -224,6 +227,7 @@ export function handSystemFingerprint() {
     gesture.activationOpenness,
     gesture.minimumVisibleTips,
     HAND_SYSTEM_CONFIG.startupCheck.minimumVisibleHands,
+    HAND_SYSTEM_CONFIG.startupCheck.minimumHandSeparation,
     HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
 }
