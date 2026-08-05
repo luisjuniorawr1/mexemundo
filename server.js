@@ -30,7 +30,7 @@ function sendFile(res, filePath) {
     }
 
     res.writeHead(200, {
-      'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+      'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] ?? 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store'
     });
     fs.createReadStream(filePath).pipe(res);
@@ -44,13 +44,14 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.12',
+      version: '0.10.17',
       games: ['balloons', 'goalkeeper'],
-      handSystem: 'universal-two-hand-v1.5.1',
+      handSystem: 'universal-two-hand-v1.5.2',
       handInput: 'mexeflow-v2-anti-pull-visual-and-fast-collision',
       gamePostProcessing: 'none',
       menu: 'stable-five-second-dwell',
-      startupGate: 'one-hand-shoulders-stability-no-gesture',
+      startupGate: 'two-hands-shoulders-separated-stable-1.4s',
+      wristVisibilityThreshold: 0.24,
       gameStart: 'one-raised-hand-screen-only-adapter',
       training: 'once-per-session-not-per-game',
       profile: 'universal-runtime-configuration',
