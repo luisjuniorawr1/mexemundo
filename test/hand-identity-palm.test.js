@@ -21,8 +21,18 @@ function makePose({
 } = {}) {
   const pose = Array.from({ length: 33 }, hiddenPoint);
   const groups = {
-    left: { indices: [15, 17, 19, 21], x: 1 - leftScreenX, wrist: leftWrist, tips: leftTips },
-    right: { indices: [16, 18, 20, 22], x: 1 - rightScreenX, wrist: rightWrist, tips: rightTips }
+    left: {
+      indices: [15, 17, 19, 21],
+      x: 1 - leftScreenX,
+      wrist: leftWrist,
+      tips: leftTips
+    },
+    right: {
+      indices: [16, 18, 20, 22],
+      x: 1 - rightScreenX,
+      wrist: rightWrist,
+      tips: rightTips
+    }
   };
 
   for (const group of Object.values(groups)) {
@@ -31,22 +41,56 @@ function makePose({
       pose[landmark] = point(group.x, 0.52 - index * 0.02, visibility);
     });
   }
+
   return pose;
 }
 
-test('mão direita isolada nunca vira esquerda por proximidade', () => {
+function screenX(pointValue) {
+  return 1 - pointValue.x;
+}
+
+test('mão direita isolada nunca vira esquerda', () => {
   const guard = new HandIdentityGuard();
-  guard.stabilize(makePose({ leftScreenX: 0.30, rightScreenX: 0.70 }), 100);
+  guard.stabilize(makePose(), 100);
 
   const output = guard.stabilize(makePose({
     leftWrist: 0,
     leftTips: [0, 0, 0],
-    rightScreenX: 0.49
+    rightScreenX: 0.31
   }), 140);
 
   assert.equal(output[15].visibility, 0);
   assert.ok(output[16].visibility > 0.2);
-  assert.ok(Math.abs((1 - output[16].x) - 0.49) < 0.02);
+  assert.ok(Math.abs(screenX(output[16]) - 0.31) < 0.02);
+});
+
+test('cruzar as mãos não troca os índices anatômicos', () => {
+  const guard = new HandIdentityGuard();
+  const output = guard.stabilize(makePose({
+    leftScreenX: 0.78,
+    rightScreenX: 0.22
+  }), 100);
+
+  assert.ok(Math.abs(screenX(output[15]) - 0.78) < 0.02);
+  assert.ok(Math.abs(screenX(output[16]) - 0.22) < 0.02);
+});
+
+test('desaparecer e reaparecer não altera o lado', () => {
+  const guard = new HandIdentityGuard();
+  guard.stabilize(makePose(), 100);
+  guard.stabilize(makePose({
+    leftWrist: 0,
+    leftTips: [0, 0, 0],
+    rightScreenX: 0.42
+  }), 140);
+
+  const output = guard.stabilize(makePose({
+    leftScreenX: 0.64,
+    rightScreenX: 0.36
+  }), 180);
+
+  assert.ok(Math.abs(screenX(output[15]) - 0.64) < 0.02);
+  assert.ok(Math.abs(screenX(output[16]) - 0.36) < 0.02);
 });
 
 test('palma com dois pontos de dedos mantém o pulso ativo', () => {
@@ -57,7 +101,7 @@ test('palma com dois pontos de dedos mantém o pulso ativo', () => {
   }), 100);
 
   assert.ok(output[15].visibility >= 0.25);
-  assert.ok(Math.abs((1 - output[15].x) - 0.30) < 0.02);
+  assert.ok(Math.abs(screenX(output[15]) - 0.30) < 0.02);
 });
 
 test('um único ponto de dedo não cria uma mão fantasma', () => {
