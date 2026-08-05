@@ -1,6 +1,8 @@
 import { FistActivation } from './fist-activation.js';
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
 
+const GESTURE = HAND_SYSTEM_CONFIG.gesture;
+
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
@@ -13,8 +15,11 @@ function viewportSize() {
 }
 
 /**
- * Cursor do menu alimentado exclusivamente pela saída visual universal.
- * A seleção ocorre pela transição mão aberta -> punho fechado.
+ * Cursor universal do menu.
+ *
+ * A posição vem do MexeFlow. A opção é capturada quando o fechamento começa,
+ * para que o pequeno deslocamento natural do pulso ao fechar a mão não faça o
+ * cursor perder o botão antes do clique.
  */
 export class UniversalMenuCursor {
   constructor({
@@ -33,13 +38,13 @@ export class UniversalMenuCursor {
     this.y = 0.5;
     this.visible = false;
     this.hoverTarget = null;
+    this.pressTarget = null;
     this.cooldownUntil = 0;
     this.lastValidAt = 0;
-    this.activation = new FistActivation({
-      side: HAND_SYSTEM_CONFIG.gesture.sideUsedForMenus
-    });
+    this.activation = new FistActivation({ side: GESTURE.sideUsedForMenus });
     this.element.classList.add('fist-mode');
     this.element.style.setProperty('--dwell', '0');
+    this.element.style.setProperty('--close', '0');
     this.render();
   }
 
@@ -48,16 +53,25 @@ export class UniversalMenuCursor {
     if (!this.enabled) this.hide();
   }
 
+  clearPressTarget() {
+    this.pressTarget?.classList.remove('motion-pressing');
+    this.pressTarget = null;
+  }
+
   hide() {
     this.visible = false;
-    this.element.classList.remove('active', 'fist-closed');
+    this.element.classList.remove('active', 'fist-closed', 'fist-armed');
+    this.element.style.setProperty('--close', '0');
     if (this.icon) this.icon.textContent = '✋';
     this.activation.reset();
+    this.clearPressTarget();
     this.resetHover();
   }
 
   resetHover() {
-    this.hoverTarget?.classList.remove('motion-hover');
+    if (this.hoverTarget !== this.pressTarget) {
+      this.hoverTarget?.classList.remove('motion-hover');
+    }
     this.hoverTarget = null;
     this.element.style.setProperty('--dwell', '0');
   }
@@ -130,30 +144,54 @@ export class UniversalMenuCursor {
     }
 
     if (!target || target.matches('[disabled], [aria-disabled="true"]')) {
-      this.resetHover();
+      if (!this.pressTarget) this.resetHover();
       return;
     }
 
     if (target !== this.hoverTarget) {
-      this.resetHover();
+      if (this.hoverTarget !== this.pressTarget) {
+        this.hoverTarget?.classList.remove('motion-hover');
+      }
       this.hoverTarget = target;
       target.classList.add('motion-hover');
     }
   }
 
+  latchTarget(closure) {
+    if (
+      !this.pressTarget
+      && this.hoverTarget
+      && closure >= GESTURE.targetLatchClosure
+    ) {
+      this.pressTarget = this.hoverTarget;
+      this.pressTarget.classList.add('motion-pressing');
+    }
+  }
+
   updateGesture(frame, now) {
     const state = this.activation.update(frame);
+    const closure = clamp(state.closure || 0);
+    this.element.style.setProperty('--close', String(closure));
     this.element.classList.toggle('fist-closed', state.closed);
+    this.element.classList.toggle('fist-armed', state.armed);
     if (this.icon) this.icon.textContent = state.closed ? '✊' : '✋';
+
+    this.latchTarget(closure);
+
+    if (!state.closed && closure <= GESTURE.targetReleaseClosure) {
+      this.clearPressTarget();
+    }
 
     if (!state.activate || now < this.cooldownUntil) return;
 
-    const selectedTarget = this.hoverTarget;
-    if (!selectedTarget) return;
+    const selectedTarget = this.pressTarget ?? this.hoverTarget;
+    if (!selectedTarget?.isConnected) return;
 
-    this.cooldownUntil = now + HAND_SYSTEM_CONFIG.gesture.clickCooldownMs;
+    this.cooldownUntil = now + GESTURE.clickCooldownMs;
     this.element.classList.add('selecting');
     setTimeout(() => this.element.classList.remove('selecting'), 220);
+
+    this.clearPressTarget();
     this.resetHover();
 
     if (typeof this.onSelect === 'function') this.onSelect(selectedTarget);
