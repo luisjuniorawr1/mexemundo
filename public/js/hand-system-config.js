@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.5.0';
+export const HAND_SYSTEM_VERSION = '1.5.1';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -12,7 +12,7 @@ const config = {
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
-    visualResponse: 'mexeflow-v2',
+    visualResponse: 'mexeflow-v2-anti-pull',
     identityGuard: 'continuous-two-hand-v1',
     menuActivation: 'stable-dwell-v1'
   },
@@ -73,7 +73,7 @@ const config = {
     idleVelocityDecay: 0.60
   },
   visual: {
-    mode: 'mexeflow-v2',
+    mode: 'mexeflow-v2-anti-pull',
     minimumDeltaMs: 4,
     maximumDeltaMs: 45,
     restEnterSpeed: 0.14,
@@ -87,8 +87,12 @@ const config = {
     fastHalfLifeMs: 8,
     fastResponseSpeed: 0.90,
     fastResponseDistance: 0.052,
-    snapDistance: 0.15,
     maximumLagDistance: 0.028,
+    lagCatchUpHalfLifeMs: 34,
+    maximumStepBase: 0.010,
+    maximumStepSpeedGain: 1.45,
+    maximumStepDistance: 0.050,
+    reacquireResetMs: 360,
     missingGraceMs: 180
   },
   menu: {
@@ -213,6 +217,7 @@ export function handSystemFingerprint() {
     visual.mode,
     visual.restEnterDistance,
     visual.maximumLagDistance,
+    visual.maximumStepDistance,
     menu.dwellMs,
     menu.stableStepDistance,
     gesture.fistEnterFraction,
