@@ -95,18 +95,45 @@ test('MexeFlow sai do repouso sem sensação de trava', () => {
   assert.ok(output.x > before + 0.002);
 });
 
-test('MexeFlow limita atraso em movimento rápido', () => {
+test('MexeFlow absorve salto isolado sem puxada brusca', () => {
   const flow = new MexeFlowPoint({ x: 0.5, y: 0.5 });
   flow.update({ x: 0.5, y: 0.5, vx: 0, vy: 0, visible: true }, 100);
   const output = flow.update({
     x: 0.72,
     y: 0.5,
-    vx: 1.4,
+    vx: 0,
     vy: 0,
     visible: true
   }, 116.67);
 
-  assert.ok(output.x >= 0.69, `posição visual ficou atrás demais: ${output.x}`);
+  assert.ok(output.x > 0.5);
+  assert.ok(output.x <= 0.5101, `salto visual excessivo: ${output.x}`);
+});
+
+test('MexeFlow alcança movimento rápido em poucos quadros sem teleporte', () => {
+  const flow = new MexeFlowPoint({ x: 0.5, y: 0.5 });
+  flow.update({ x: 0.5, y: 0.5, vx: 0, vy: 0, visible: true }, 100);
+
+  let now = 100;
+  let previousX = 0.5;
+  let output = null;
+  for (let index = 0; index < 5; index += 1) {
+    now += 16.67;
+    output = flow.update({
+      x: 0.72,
+      y: 0.5,
+      vx: 1.4,
+      vy: 0,
+      visible: true
+    }, now);
+    assert.ok(
+      output.x - previousX <= 0.0501,
+      `correção por quadro excessiva: ${output.x - previousX}`
+    );
+    previousX = output.x;
+  }
+
+  assert.ok(output.x > 0.70, `resposta rápida ficou lenta: ${output.x}`);
 });
 
 test('identidade rejeita uma troca temporária de lados', () => {
@@ -114,7 +141,6 @@ test('identidade rejeita uma troca temporária de lados', () => {
   guard.stabilize(makeIdentityPose(0.30, 0.70), 100);
   guard.stabilize(makeIdentityPose(0.34, 0.66), 116);
 
-  // O detector entrega os lados trocados durante um único quadro.
   const output = guard.stabilize(makeIdentityPose(0.62, 0.38), 132);
   const stableLeftX = 1 - output[15].x;
   const stableRightX = 1 - output[16].x;
