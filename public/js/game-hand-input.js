@@ -1,8 +1,8 @@
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
+import { MexeFlowPoint } from './mexeflow.js';
 
 const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
 const HAND_NAMES = new Set(['left', 'right']);
-const VISUAL = HAND_SYSTEM_CONFIG.visual;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -18,7 +18,8 @@ function emptyGesture() {
     confidence: 0,
     openness: 0,
     reach: 0,
-    reference: 0
+    reference: 0,
+    visibleTips: 0
   };
 }
 
@@ -41,7 +42,8 @@ function normalizeGesture(gesture) {
     confidence: clamp(Number(gesture?.confidence || 0)),
     openness: clamp(Number(gesture?.openness || 0), 0, 1.5),
     reach: Math.max(0, Number(gesture?.reach || 0)),
-    reference: Math.max(0, Number(gesture?.reference || 0))
+    reference: Math.max(0, Number(gesture?.reference || 0)),
+    visibleTips: clamp(Math.round(Number(gesture?.visibleTips || 0)), 0, 3)
   };
 }
 
@@ -72,95 +74,20 @@ function predictedPoint(point, predictionSeconds) {
   };
 }
 
-class VisualPointState {
-  constructor(fallback) {
-    this.fallback = fallback;
-    this.ready = false;
-    this.x = fallback.x;
-    this.y = fallback.y;
-    this.lastVisibleAt = 0;
-  }
-
-  reset() {
-    this.ready = false;
-    this.x = this.fallback.x;
-    this.y = this.fallback.y;
-    this.lastVisibleAt = 0;
-  }
-
-  update(source, now) {
-    if (!source.visible) {
-      const withinGrace = this.ready
-        && this.lastVisibleAt
-        && now - this.lastVisibleAt <= VISUAL.missingGraceMs;
-      return {
-        ...source,
-        x: this.x,
-        y: this.y,
-        vx: 0,
-        vy: 0,
-        visible: Boolean(withinGrace)
-      };
-    }
-
-    this.lastVisibleAt = now;
-    if (!this.ready) {
-      this.ready = true;
-      this.x = source.x;
-      this.y = source.y;
-      return { ...source };
-    }
-
-    const dx = source.x - this.x;
-    const dy = source.y - this.y;
-    const distance = Math.hypot(dx, dy);
-    const speed = Math.hypot(source.vx, source.vy);
-
-    if (distance <= VISUAL.restDeadZone && speed <= VISUAL.restSpeed) {
-      return {
-        ...source,
-        x: this.x,
-        y: this.y
-      };
-    }
-
-    const speedAmount = clamp(
-      (speed - VISUAL.restSpeed) / VISUAL.movementSpeedRange
-    );
-    const distanceAmount = clamp(
-      (distance - VISUAL.restDeadZone) / VISUAL.movementDistanceRange
-    );
-    const responsiveness = Math.max(speedAmount, distanceAmount);
-    const alpha = distance >= VISUAL.snapDistance
-      ? 1
-      : VISUAL.minimumAlpha
-        + responsiveness * (VISUAL.maximumAlpha - VISUAL.minimumAlpha);
-
-    this.x += dx * alpha;
-    this.y += dy * alpha;
-
-    return {
-      ...source,
-      x: clamp(this.x),
-      y: clamp(this.y)
-    };
-  }
-}
-
 /**
  * Entrada universal para todos os jogos do MexeMundo.
  *
  * O celular entrega posições filtradas e gestos. Esta classe normaliza o
  * protocolo, controla validade temporal e oferece duas saídas:
- * - visual: estabilizada a cada frame da TV;
+ * - visual: MexeFlow, suave em repouso e rápido em movimento;
  * - collision: rápida, sem a suavização visual.
  */
 export class UniversalHandInput {
   constructor() {
     this.frame = emptyFrame();
     this.visualStates = {
-      left: new VisualPointState(this.frame.left),
-      right: new VisualPointState(this.frame.right)
+      left: new MexeFlowPoint(this.frame.left),
+      right: new MexeFlowPoint(this.frame.right)
     };
   }
 
