@@ -25,27 +25,27 @@
       <div class="mascot">📱</div>
       <span class="eyebrow">CONECTE UMA VEZ</span>
       <h2>Abra <strong>/celular</strong> no telefone</h2>
-      <p>Digite este código. Depois faremos uma verificação rápida das duas mãos.</p>
+      <p>Digite este código. Depois faremos uma verificação rápida com uma mão.</p>
       <div id="roomCode" class="room-code">----</div>
       <p class="room-hint">O mesmo sistema de mãos será usado por todos os jogos.</p>
     </section>
 
     <section id="calibrationPanel" class="modal-card calibration-panel hidden">
-      <span class="eyebrow">VERIFICAÇÃO UNIVERSAL DAS DUAS MÃOS</span>
-      <h2>Mostre uma mão de cada lado</h2>
-      <p>Mantenha as duas mãos e os ombros visíveis e parados por um instante.</p>
+      <span class="eyebrow">VERIFICAÇÃO RÁPIDA</span>
+      <h2>Mostre pelo menos uma mão</h2>
+      <p>Mantenha uma mão e os ombros visíveis e parados por um instante. As duas mãos não precisam aparecer juntas.</p>
       <div class="motion-calibration-hands" aria-hidden="true">
-        <div class="motion-calibration-target left"><span>🤚</span><small>ESQUERDA</small></div>
-        <div class="motion-calibration-target right"><span>✋</span><small>DIREITA</small></div>
+        <div class="motion-calibration-target left"><span>🤚</span><small>QUALQUER UMA</small></div>
+        <div class="motion-calibration-target right"><span>✋</span><small>UMA JÁ BASTA</small></div>
       </div>
       <div class="calibration-meter"><span id="calibrationProgress"></span></div>
-      <strong id="calibrationMessage">Mostre as duas mãos e os ombros para a câmera.</strong>
+      <strong id="calibrationMessage">Mostre uma mão e os ombros para a câmera.</strong>
     </section>
 
     <section id="menuPanel" class="motion-menu hidden" aria-label="Escolha um jogo">
-      <span class="eyebrow">APONTE E FECHE A MÃO PARA ESCOLHER</span>
+      <span class="eyebrow">MANTENHA A MÃO PARADA PARA ESCOLHER</span>
       <h1>Qual vai ser a brincadeira?</h1>
-      <p>A mão direita funciona como cursor. Posicione sobre uma opção e feche a mão.</p>
+      <p>Posicione a mão sobre uma opção e fique parado por 5 segundos, até o círculo completar.</p>
 
       <div class="motion-game-grid">
         <a class="motion-game-card balloon" data-motion-target data-game-path="/tv" href="/tv">
@@ -62,9 +62,9 @@
       </div>
 
       <div class="motion-menu-actions">
-        <button id="recalibrateButton" class="button secondary motion-action" data-motion-target type="button">Verificar mãos novamente</button>
+        <button id="recalibrateButton" class="button secondary motion-action" data-motion-target type="button">Verificar mão novamente</button>
       </div>
-      <div class="motion-help">Sistema universal ativo • aponte com a mão direita • feche a mão uma vez para clicar</div>
+      <div class="motion-help">Sistema universal ativo • mão direita ou esquerda • permaneça 5 segundos para abrir</div>
     </section>
   </main>
 
