@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.4.0';
+export const HAND_SYSTEM_VERSION = '1.5.0';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,13 +7,14 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 4,
+    inputVersion: 5,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
     visualResponse: 'mexeflow-v2',
-    identityGuard: 'continuous-two-hand-v1'
+    identityGuard: 'continuous-two-hand-v1',
+    menuActivation: 'stable-dwell-v1'
   },
   camera: {
     facingMode: 'user',
@@ -90,6 +91,18 @@ const config = {
     maximumLagDistance: 0.028,
     missingGraceMs: 180
   },
+  menu: {
+    preferredHand: 'right',
+    fallbackHand: 'left',
+    dwellMs: 5000,
+    stableStepDistance: 0.008,
+    maximumRecoverableStepDistance: 0.026,
+    unstableDecayMultiplier: 0.65,
+    maximumFrameDeltaMs: 55,
+    targetExitMarginPx: 58,
+    missingGraceMs: 240,
+    cooldownMs: 1200
+  },
   gesture: {
     sideUsedForMenus: 'right',
     minimumVisibility: 0.14,
@@ -118,8 +131,9 @@ const config = {
     clickCooldownMs: 420
   },
   startupCheck: {
-    holdMs: 1400,
-    maximumStillSpeed: 0.18,
+    holdMs: 950,
+    maximumStillSpeed: 0.26,
+    minimumVisibleHands: 1,
     minimumHandSeparation: 0.16,
     requireShoulders: true,
     requireOpenHands: false
@@ -182,12 +196,14 @@ export function handSystemFingerprint() {
   const identity = HAND_SYSTEM_CONFIG.identity;
   const filter = HAND_SYSTEM_CONFIG.filter;
   const visual = HAND_SYSTEM_CONFIG.visual;
+  const menu = HAND_SYSTEM_CONFIG.menu;
   const gesture = HAND_SYSTEM_CONFIG.gesture;
   return [
     HAND_SYSTEM_VERSION,
     HAND_SYSTEM_CONFIG.system.productionEngine,
     HAND_SYSTEM_CONFIG.system.visualResponse,
     HAND_SYSTEM_CONFIG.system.identityGuard,
+    HAND_SYSTEM_CONFIG.system.menuActivation,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
@@ -197,9 +213,12 @@ export function handSystemFingerprint() {
     visual.mode,
     visual.restEnterDistance,
     visual.maximumLagDistance,
+    menu.dwellMs,
+    menu.stableStepDistance,
     gesture.fistEnterFraction,
     gesture.activationOpenness,
     gesture.minimumVisibleTips,
+    HAND_SYSTEM_CONFIG.startupCheck.minimumVisibleHands,
     HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
 }
