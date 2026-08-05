@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.2.0';
+export const HAND_SYSTEM_VERSION = '1.2.1';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -91,7 +91,7 @@ const config = {
     maximumStillSpeed: 0.18,
     minimumHandSeparation: 0.16,
     requireShoulders: true,
-    requireOpenHands: true
+    requireOpenHands: false
   },
   scheduler: {
     poseFreshnessMs: 260,
