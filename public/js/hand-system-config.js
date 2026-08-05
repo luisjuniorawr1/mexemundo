@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.6.0';
+export const HAND_SYSTEM_VERSION = '1.6.1';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,13 +7,14 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 6,
+    inputVersion: 7,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
     visualResponse: 'mexeflow-v2-anti-pull',
     identityGuard: 'continuous-two-hand-v1',
+    handPresence: 'short-dropout-bridge-v1',
     menuActivation: 'stable-dwell-v1',
     handInterface: 'universal-dwell-controls-v1'
   },
@@ -40,6 +41,10 @@ const config = {
     minimumPresenceConfidence: 0.5,
     minimumTrackingConfidence: 0.5,
     handModel: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+  },
+  presence: {
+    visualGraceMs: 220,
+    collisionGraceMs: 80
   },
   identity: {
     minimumVisibility: 0.18,
@@ -212,6 +217,7 @@ export const HAND_SYSTEM_CONFIG = deepFreeze(config);
 
 export function handSystemFingerprint() {
   const detector = HAND_SYSTEM_CONFIG.detector;
+  const presence = HAND_SYSTEM_CONFIG.presence;
   const identity = HAND_SYSTEM_CONFIG.identity;
   const filter = HAND_SYSTEM_CONFIG.filter;
   const visual = HAND_SYSTEM_CONFIG.visual;
@@ -223,11 +229,14 @@ export function handSystemFingerprint() {
     HAND_SYSTEM_CONFIG.system.productionEngine,
     HAND_SYSTEM_CONFIG.system.visualResponse,
     HAND_SYSTEM_CONFIG.system.identityGuard,
+    HAND_SYSTEM_CONFIG.system.handPresence,
     HAND_SYSTEM_CONFIG.system.menuActivation,
     HAND_SYSTEM_CONFIG.system.handInterface,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
+    presence.visualGraceMs,
+    presence.collisionGraceMs,
     identity.switchMargin,
     identity.maximumAcceptedJump,
     filter.wristRestDeadZone,
