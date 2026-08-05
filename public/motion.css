@@ -69,6 +69,14 @@
   box-shadow: 0 22px 45px rgba(65,45,120,.23), 0 0 0 7px rgba(255,207,74,.22);
 }
 
+.motion-game-card.motion-pressing,
+.motion-action.motion-pressing,
+.motion-back-button.motion-pressing {
+  transform: translateY(-2px) scale(.985);
+  border-color: #ff9f1c;
+  box-shadow: 0 14px 30px rgba(65,45,120,.24), 0 0 0 9px rgba(255,159,28,.25);
+}
+
 .motion-menu-actions { margin-top: 20px; display: flex; justify-content: center; gap: 12px; }
 .motion-action { border: 4px solid transparent; }
 .motion-help { margin-top: 16px; color: var(--muted); font-size: .9rem; font-weight: 800; }
@@ -105,6 +113,7 @@
 
 .motion-cursor {
   --dwell: 0;
+  --close: 0;
   position: fixed;
   z-index: 1000;
   left: 0;
@@ -132,7 +141,7 @@
 }
 
 .motion-cursor.fist-mode::before {
-  background: rgba(255,255,255,.72);
+  background: conic-gradient(#ff9f1c calc(var(--close) * 1turn), rgba(255,255,255,.72) 0);
 }
 
 .motion-cursor::after {
@@ -148,6 +157,7 @@
 
 .motion-cursor span { position: relative; z-index: 2; font-size: 31px; }
 .motion-cursor.active { opacity: 1; }
+.motion-cursor.fist-armed::after { background: rgba(82,95,246,.92); }
 .motion-cursor.fist-closed { scale: .84; }
 .motion-cursor.fist-closed::after {
   background: rgba(255,159,28,.95);
