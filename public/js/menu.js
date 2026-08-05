@@ -22,7 +22,7 @@ const recalibrateButton = document.querySelector('#recalibrateButton');
 const fullscreenButton = document.querySelector('#fullscreenButton');
 const gameLinks = [...document.querySelectorAll('[data-game-path]')];
 
-const SESSION_KEY = `mexemundo-hand-session-ready-v1:${room}`;
+const SESSION_KEY = `mexemundo-hand-session-ready-v2:${room}`;
 const STARTUP = HAND_SYSTEM_CONFIG.startupCheck;
 
 roomCode.textContent = room;
@@ -30,7 +30,6 @@ for (const link of gameLinks) link.href = roomHref(link.dataset.gamePath, room);
 
 const cursor = new UniversalMenuCursor({
   element: cursorElement,
-  dwellMs: 950,
   enabled: false
 });
 
@@ -39,6 +38,7 @@ let transportMode = 'relay';
 let state = 'pairing';
 let lastVisualFrame = null;
 let stableSince = 0;
+let openingMenu = false;
 
 function setState(next) {
   state = next;
@@ -50,16 +50,18 @@ function setState(next) {
 
 function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
   stableSince = 0;
+  openingMenu = false;
   calibrationProgress.style.width = '0%';
   calibrationMessage.textContent = message;
 }
 
 function startCalibration() {
-  resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
+  resetCalibration('Mostre as duas mãos abertas e os ombros para a câmera.');
   setState('calibrating');
 }
 
 function showMenu() {
+  openingMenu = false;
   sessionStorage.setItem(SESSION_KEY, '1');
   calibrationProgress.style.width = '100%';
   setState('menu');
@@ -69,16 +71,30 @@ function showMenu() {
 function handsReady(frame) {
   if (!frame?.fresh || !frame?.detected) return false;
   if (!frame.left?.visible || !frame.right?.visible) return false;
-  if (STARTUP.requireShoulders
-    && (!frame.leftShoulder?.visible || !frame.rightShoulder?.visible)) {
-    return false;
-  }
+  if (
+    STARTUP.requireShoulders
+    && (!frame.leftShoulder?.visible || !frame.rightShoulder?.visible)
+  ) return false;
   return true;
+}
+
+function handsOpen(frame) {
+  if (!STARTUP.requireOpenHands) return true;
+  const states = [
+    frame?.gestures?.left?.state,
+    frame?.gestures?.right?.state
+  ];
+  return states.every((gesture) => gesture === 'open');
 }
 
 function updateCalibration(frame, now) {
   if (!handsReady(frame)) {
     resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
+    return;
+  }
+
+  if (!handsOpen(frame)) {
+    resetCalibration('Abra as duas mãos para confirmar o gesto.');
     return;
   }
 
@@ -104,12 +120,15 @@ function updateCalibration(frame, now) {
   const progress = Math.min(1, (now - stableSince) / STARTUP.holdMs);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
   calibrationMessage.textContent = progress < 0.45
-    ? 'Duas mãos reconhecidas…'
+    ? 'Duas mãos abertas reconhecidas…'
     : progress < 0.85
       ? 'Confirmando estabilidade…'
       : 'Tudo pronto!';
 
-  if (progress >= 1) setTimeout(showMenu, 180);
+  if (progress >= 1 && !openingMenu) {
+    openingMenu = true;
+    setTimeout(showMenu, 180);
+  }
 }
 
 function updateConnection({ phone } = {}) {
@@ -143,11 +162,7 @@ socket.on('transport', ({ mode }) => {
 });
 
 socket.on('pose', (pose) => {
-  const frames = handInput.ingest(pose);
-  lastVisualFrame = frames.visual;
-  const now = performance.now();
-  if (state === 'calibrating') updateCalibration(frames.visual, now);
-  if (state === 'menu') cursor.updateFrame(frames.visual, now);
+  handInput.ingest(pose);
 });
 
 recalibrateButton?.addEventListener('click', () => {
@@ -164,9 +179,18 @@ fullscreenButton.addEventListener('click', async () => {
   }
 });
 
+function frame(now) {
+  const frames = handInput.sample(now);
+  lastVisualFrame = frames.visual;
+  if (state === 'calibrating') updateCalibration(frames.visual, now);
+  if (state === 'menu') cursor.updateFrame(frames.visual, now);
+  requestAnimationFrame(frame);
+}
+
 await socket.connect();
 const joined = await socket.request('join', { room, role: 'tv' });
 updateConnection(joined?.status);
+requestAnimationFrame(frame);
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state === 'menu' && lastVisualFrame) {
