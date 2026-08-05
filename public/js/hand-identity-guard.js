@@ -96,7 +96,6 @@ class IdentityTrack {
     this.vy = 0;
     this.lastAt = 0;
     this.lastAcceptedAt = 0;
-    this.lastGroup = null;
   }
 
   predict(now) {
@@ -136,16 +135,6 @@ class IdentityTrack {
 
     this.lastAt = now;
     this.lastAcceptedAt = now;
-    this.lastGroup = trustedGroup(group);
-  }
-
-  hold(now) {
-    if (
-      !this.lastGroup
-      || !this.lastAcceptedAt
-      || now - this.lastAcceptedAt > CONFIG.measurementGraceMs
-    ) return null;
-    return copyGroup(this.lastGroup);
   }
 
   stale(now) {
@@ -199,22 +188,23 @@ export class HandIdentityGuard {
   }
 
   accept(side, group, now) {
+    if (!group) return null;
     const track = this.tracks[side];
-    if (!group) return track.hold(now);
 
     if (track.stale(now)) {
       track.reset();
       track.update(group, now);
-      return track.hold(now);
+      return trustedGroup(group);
     }
 
     if (track.cost(group.wrist, now) > CONFIG.maximumAcceptedJump) {
-      // Um quadro impossível não apaga a mão nem troca sua identidade.
-      return track.hold(now);
+      // A ponte universal tratará a perda com tempos diferentes para visual
+      // e colisão. O guardião não inventa uma medição nem troca sua identidade.
+      return null;
     }
 
     track.update(group, now);
-    return track.hold(now);
+    return trustedGroup(group);
   }
 
   updateAssignment(source, now) {
