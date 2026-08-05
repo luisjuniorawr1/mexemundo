@@ -3,6 +3,7 @@ import {
   HAND_SYSTEM_CONFIG,
   MEDIAPIPE_TASKS_VERSION
 } from './hand-system-config.js';
+import { createHandIdentityGuard } from './hand-identity-guard.js';
 import { createPoseFistGestureTracker } from './pose-gesture.js';
 
 const CAMERA = HAND_SYSTEM_CONFIG.camera;
@@ -36,6 +37,7 @@ const POINTS = {
 const POINT_NAMES = Object.keys(POINTS);
 const WRISTS = new Set(['left', 'right']);
 const filters = new Map();
+const identityGuard = createHandIdentityGuard();
 const gestureTracker = createPoseFistGestureTracker();
 
 overlay.style.display = 'none';
@@ -186,6 +188,7 @@ function getFilter(name) {
 
 function resetTrackingState() {
   for (const filter of filters.values()) filter.reset();
+  identityGuard.reset();
   gestureTracker.reset();
 }
 
@@ -263,8 +266,11 @@ function averageVisibility(pose) {
 function emitPose(pose, detected, now, processingMs) {
   const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
   previousFrameAt = now;
+  const stablePose = detected
+    ? identityGuard.stabilize(pose, now)
+    : null;
   const gestures = detected
-    ? gestureTracker.update(pose, now)
+    ? gestureTracker.update(stablePose, now)
     : gestureTracker.missing(now);
 
   const payload = {
@@ -274,16 +280,16 @@ function emitPose(pose, detected, now, processingMs) {
     processingMs: Math.round(processingMs),
     sourceIntervalMs: Math.round(sourceIntervalMs),
     left: detected
-      ? filteredPoint('left', pose[POINTS.left], now)
+      ? filteredPoint('left', stablePose[POINTS.left], now)
       : hiddenPoint(0.35, 0.55),
     right: detected
-      ? filteredPoint('right', pose[POINTS.right], now)
+      ? filteredPoint('right', stablePose[POINTS.right], now)
       : hiddenPoint(0.65, 0.55),
     leftShoulder: detected
-      ? filteredPoint('leftShoulder', pose[POINTS.leftShoulder], now)
+      ? filteredPoint('leftShoulder', stablePose[POINTS.leftShoulder], now)
       : hiddenPoint(0.44, 0.35),
     rightShoulder: detected
-      ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now)
+      ? filteredPoint('rightShoulder', stablePose[POINTS.rightShoulder], now)
       : hiddenPoint(0.56, 0.35),
     gestures
   };
