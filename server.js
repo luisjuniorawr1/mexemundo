@@ -44,10 +44,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.13',
+      version: '0.10.14',
       games: ['balloons', 'goalkeeper'],
-      handSystem: 'universal-two-hand-v1.6',
+      handSystem: 'universal-two-hand-v1.6.1',
       handInput: 'mexeflow-v2-anti-pull-visual-and-fast-collision',
+      handPresence: 'short-dropout-bridge-visual-220ms-collision-80ms',
       gamePostProcessing: 'none',
       menu: 'stable-five-second-dwell-all-controls',
       gameInterface: 'hand-only-stable-dwell-all-actions',
