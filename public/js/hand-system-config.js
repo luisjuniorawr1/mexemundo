@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.5.4';
+export const HAND_SYSTEM_VERSION = '1.6.0';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,16 +7,16 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 8,
+    inputVersion: 9,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
     visualResponse: 'mexeflow-v2-anti-pull',
-    identityGuard: 'anatomical-passthrough-no-swap-v1',
+    identityGuard: 'sequential-calibrated-sensor-binding-v1',
     menuActivation: 'stable-dwell-v1',
-    startupVerification: 'strict-two-hand-separated-v1',
-    palmPresence: 'wrist-or-two-pose-finger-points-v1'
+    startupVerification: 'right-then-left-sensor-binding-v1',
+    palmPresence: 'calibrated-wrist-palm-offset-v1'
   },
   camera: {
     facingMode: 'user',
@@ -47,6 +47,25 @@ const config = {
     palmSupportVisibility: 0.18,
     minimumPalmSupportPoints: 2,
     palmTrustedWristVisibility: 0.25
+  },
+  sensorCalibration: {
+    holdMs: 1100,
+    minimumCalibrationSamples: 12,
+    maximumCalibrationSamples: 72,
+    supportVisibility: 0.18,
+    wristVisibility: 0.24,
+    armVisibility: 0.18,
+    minimumSupportPoints: 2,
+    minimumEvidence: 0.42,
+    minimumEvidenceAdvantage: 0.10,
+    raiseShoulderTolerance: 0.08,
+    maximumStillStep: 0.030,
+    maximumWristPalmDisagreement: 0.11,
+    maximumSensorJump: 0.24,
+    dropoutHoldMs: 180,
+    reacquireAfterMs: 350,
+    trustedOutputVisibility: 0.25,
+    statusBroadcastIntervalMs: 300
   },
   filter: {
     wristVelocityBlend: 0.38,
@@ -196,6 +215,7 @@ export const HAND_SYSTEM_CONFIG = deepFreeze(config);
 export function handSystemFingerprint() {
   const detector = HAND_SYSTEM_CONFIG.detector;
   const identity = HAND_SYSTEM_CONFIG.identity;
+  const sensors = HAND_SYSTEM_CONFIG.sensorCalibration;
   const filter = HAND_SYSTEM_CONFIG.filter;
   const visual = HAND_SYSTEM_CONFIG.visual;
   const menu = HAND_SYSTEM_CONFIG.menu;
@@ -215,7 +235,10 @@ export function handSystemFingerprint() {
     identity.minimumVisibility,
     identity.palmSupportVisibility,
     identity.minimumPalmSupportPoints,
-    identity.palmTrustedWristVisibility,
+    sensors.holdMs,
+    sensors.maximumWristPalmDisagreement,
+    sensors.maximumSensorJump,
+    sensors.dropoutHoldMs,
     filter.wristRestDeadZone,
     visual.mode,
     visual.restEnterDistance,
