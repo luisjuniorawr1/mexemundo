@@ -44,13 +44,14 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.10',
+      version: '0.10.11',
       games: ['balloons', 'goalkeeper'],
       handSystem: 'universal-two-hand-v1.5',
       handInput: 'mexeflow-v2-visual-and-fast-collision',
       gamePostProcessing: 'none',
       menu: 'stable-five-second-dwell',
       startupGate: 'one-hand-shoulders-stability-no-gesture',
+      gameStart: 'one-raised-hand-screen-only-adapter',
       training: 'once-per-session-not-per-game',
       profile: 'universal-runtime-configuration',
       tracking: 'pose-landmarker-lite-single-pass-reference-0.6.0',
