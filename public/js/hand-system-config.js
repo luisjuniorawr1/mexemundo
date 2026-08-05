@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.1.0';
+export const HAND_SYSTEM_VERSION = '1.2.0';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,7 +7,7 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 1,
+    inputVersion: 2,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
@@ -31,7 +31,7 @@ const config = {
     pointVisibilityConfidence: 0.3,
     poseModel: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
 
-    // Mantidos para os laboratorios de pesquisa. Nao sao carregados na producao.
+    // Mantidos para os laboratórios de pesquisa. Não são carregados na produção.
     minimumDetectionConfidence: 0.5,
     minimumPresenceConfidence: 0.5,
     minimumTrackingConfidence: 0.5,
@@ -40,13 +40,13 @@ const config = {
   filter: {
     wristVelocityBlend: 0.38,
     bodyVelocityBlend: 0.24,
-    wristRestSpeed: 0.12,
+    wristRestSpeed: 0.15,
     wristMoveSpeed: 0.35,
-    wristRestDeadZone: 0.0032,
+    wristRestDeadZone: 0.004,
     wristMoveDeadZone: 0.0016,
     wristFastDeadZone: 0.0007,
-    wristBaseAlpha: 0.18,
-    wristAlphaRange: 0.76,
+    wristBaseAlpha: 0.14,
+    wristAlphaRange: 0.80,
     wristMovementStart: 0.07,
     wristMovementRange: 0.95,
     wristDisplacementRange: 0.045,
@@ -57,19 +57,47 @@ const config = {
     bodyDistanceGain: 5,
     bodyMaximumAlpha: 0.72,
     filteredVelocityBlend: 0.35,
-    idleVelocityDecay: 0.72
+    idleVelocityDecay: 0.60
+  },
+  visual: {
+    restSpeed: 0.18,
+    restDeadZone: 0.0045,
+    movementSpeedRange: 1.10,
+    movementDistanceRange: 0.055,
+    minimumAlpha: 0.16,
+    maximumAlpha: 0.86,
+    snapDistance: 0.085,
+    missingGraceMs: 180
+  },
+  gesture: {
+    sideUsedForMenus: 'right',
+    minimumVisibility: 0.24,
+    initialOpenReferenceRatio: 0.16,
+    minimumOpenReferenceRatio: 0.11,
+    maximumOpenReferenceRatio: 0.30,
+    openReferenceRiseAlpha: 0.18,
+    openReferenceFallAlpha: 0.025,
+    fistEnterFraction: 0.56,
+    fistExitFraction: 0.76,
+    minimumFistRatio: 0.045,
+    minimumThresholdGap: 0.018,
+    confirmationMs: 120,
+    releaseMs: 90,
+    unknownAfterMs: 220,
+    clickCooldownMs: 420
   },
   startupCheck: {
     holdMs: 1400,
     maximumStillSpeed: 0.18,
     minimumHandSeparation: 0.16,
-    requireShoulders: true
+    requireShoulders: true,
+    requireOpenHands: true
   },
   scheduler: {
     poseFreshnessMs: 260,
     emptyFrameIntervalMs: 100,
 
-    // Compatibilidade com modulos de pesquisa antigos.
+    // Compatibilidade com módulos de pesquisa antigos.
     defaultHandRate: 24,
     handRates: [30, 24, 18, 12],
     inferenceThresholdsMs: [22, 34, 52],
@@ -121,6 +149,8 @@ export const HAND_SYSTEM_CONFIG = deepFreeze(config);
 export function handSystemFingerprint() {
   const detector = HAND_SYSTEM_CONFIG.detector;
   const filter = HAND_SYSTEM_CONFIG.filter;
+  const visual = HAND_SYSTEM_CONFIG.visual;
+  const gesture = HAND_SYSTEM_CONFIG.gesture;
   return [
     HAND_SYSTEM_VERSION,
     HAND_SYSTEM_CONFIG.system.productionEngine,
@@ -128,6 +158,8 @@ export function handSystemFingerprint() {
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
     filter.wristRestDeadZone,
+    visual.restDeadZone,
+    gesture.fistEnterFraction,
     HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
 }
