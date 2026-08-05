@@ -22,7 +22,7 @@ const recalibrateButton = document.querySelector('#recalibrateButton');
 const fullscreenButton = document.querySelector('#fullscreenButton');
 const gameLinks = [...document.querySelectorAll('[data-game-path]')];
 
-const SESSION_KEY = `mexemundo-hand-session-ready-v3:${room}`;
+const SESSION_KEY = `mexemundo-hand-session-ready-v4:${room}`;
 const STARTUP = HAND_SYSTEM_CONFIG.startupCheck;
 
 roomCode.textContent = room;
@@ -48,7 +48,7 @@ function setState(next) {
   cursor.setEnabled(next === 'menu' && phoneConnected);
 }
 
-function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
+function resetCalibration(message = 'Mostre uma mão para a câmera.') {
   stableSince = 0;
   openingMenu = false;
   calibrationProgress.style.width = '0%';
@@ -56,7 +56,7 @@ function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
 }
 
 function startCalibration() {
-  resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
+  resetCalibration('Mostre uma mão e os ombros para a câmera.');
   setState('calibrating');
 }
 
@@ -68,9 +68,13 @@ function showMenu() {
   if (lastVisualFrame) cursor.updateFrame(lastVisualFrame);
 }
 
+function visibleHands(frame) {
+  return [frame?.left, frame?.right].filter((hand) => hand?.visible);
+}
+
 function handsReady(frame) {
   if (!frame?.fresh || !frame?.detected) return false;
-  if (!frame.left?.visible || !frame.right?.visible) return false;
+  if (visibleHands(frame).length < STARTUP.minimumVisibleHands) return false;
   if (
     STARTUP.requireShoulders
     && (!frame.leftShoulder?.visible || !frame.rightShoulder?.visible)
@@ -79,26 +83,17 @@ function handsReady(frame) {
 }
 
 function updateCalibration(frame, now) {
+  const hands = visibleHands(frame);
   if (!handsReady(frame)) {
-    resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
-    return;
-  }
-
-  const separation = Math.hypot(
-    frame.left.x - frame.right.x,
-    frame.left.y - frame.right.y
-  );
-  if (separation < STARTUP.minimumHandSeparation) {
-    resetCalibration('Afaste um pouco as mãos uma da outra.');
+    resetCalibration('Mostre uma mão e os ombros para a câmera.');
     return;
   }
 
   const speed = Math.max(
-    Math.hypot(frame.left.vx ?? 0, frame.left.vy ?? 0),
-    Math.hypot(frame.right.vx ?? 0, frame.right.vy ?? 0)
+    ...hands.map((hand) => Math.hypot(hand.vx ?? 0, hand.vy ?? 0))
   );
   if (speed > STARTUP.maximumStillSpeed) {
-    resetCalibration('Ótimo! Agora mantenha as duas mãos paradas.');
+    resetCalibration('Mão reconhecida. Mantenha-a parada por um instante.');
     return;
   }
 
@@ -106,14 +101,14 @@ function updateCalibration(frame, now) {
   const progress = Math.min(1, (now - stableSince) / STARTUP.holdMs);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
   calibrationMessage.textContent = progress < 0.45
-    ? 'Duas mãos reconhecidas…'
+    ? (hands.length >= 2 ? 'Duas mãos reconhecidas…' : 'Uma mão reconhecida…')
     : progress < 0.85
-      ? 'Confirmando estabilidade…'
+      ? 'Confirmando conexão…'
       : 'Tudo pronto!';
 
   if (progress >= 1 && !openingMenu) {
     openingMenu = true;
-    setTimeout(showMenu, 180);
+    setTimeout(showMenu, 160);
   }
 }
 
