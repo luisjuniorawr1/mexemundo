@@ -142,7 +142,8 @@ function updateConnection({ phone } = {}) {
     return;
   }
 
-  startCalibration(sensorStatus);
+  if (sensorStatus.ready) showMenu();
+  else startCalibration(sensorStatus);
 }
 
 socket.on('room-status', updateConnection);
