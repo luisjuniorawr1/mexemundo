@@ -1,8 +1,6 @@
 import { RealtimeClient } from './realtime.js';
 import { createUniversalHandInput } from './game-hand-input.js';
-import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
 import { UniversalMenuCursor } from './universal-menu-cursor.js';
-import { evaluateTwoHandStartup } from './two-hand-startup-check.js';
 import {
   getPersistentRoom,
   roomHref
@@ -17,14 +15,13 @@ const calibrationPanel = document.querySelector('#calibrationPanel');
 const menuPanel = document.querySelector('#menuPanel');
 const calibrationProgress = document.querySelector('#calibrationProgress');
 const calibrationMessage = document.querySelector('#calibrationMessage');
+const calibrationTitle = document.querySelector('#calibrationTitle');
+const calibrationDescription = document.querySelector('#calibrationDescription');
 const connectionBadge = document.querySelector('#connectionBadge');
 const cursorElement = document.querySelector('#motionCursor');
 const recalibrateButton = document.querySelector('#recalibrateButton');
 const fullscreenButton = document.querySelector('#fullscreenButton');
 const gameLinks = [...document.querySelectorAll('[data-game-path]')];
-
-const SESSION_KEY = `mexemundo-hand-session-ready-v5:${room}`;
-const STARTUP = HAND_SYSTEM_CONFIG.startupCheck;
 
 roomCode.textContent = room;
 for (const link of gameLinks) link.href = roomHref(link.dataset.gamePath, room);
@@ -38,8 +35,12 @@ let phoneConnected = false;
 let transportMode = 'relay';
 let state = 'pairing';
 let lastVisualFrame = null;
-let stableSince = 0;
-let openingMenu = false;
+let sensorStatus = {
+  stage: 'right',
+  progress: 0,
+  ready: false,
+  reason: 'show-right'
+};
 
 function setState(next) {
   state = next;
@@ -49,62 +50,75 @@ function setState(next) {
   cursor.setEnabled(next === 'menu' && phoneConnected);
 }
 
-function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
-  stableSince = 0;
-  openingMenu = false;
-  calibrationProgress.style.width = '0%';
-  calibrationMessage.textContent = message;
+function copyForSensorStatus(status) {
+  if (status.ready) {
+    return {
+      title: 'Sensores configurados',
+      description: 'Cada mão está presa ao sensor configurado para ela.',
+      message: 'Tudo pronto!'
+    };
+  }
+
+  const rightStage = status.stage !== 'left';
+  const side = rightStage ? 'direita' : 'esquerda';
+  let message = `Mostre somente a mão ${side} para a câmera.`;
+
+  if (status.reason === 'lower-other-hand') {
+    message = 'Abaixe completamente a outra mão para separar os sensores.';
+  } else if (status.reason === 'hold-still') {
+    message = `Mão ${side} encontrada. Mantenha-a parada até completar.`;
+  }
+
+  return {
+    title: rightStage
+      ? 'Primeiro: mão direita'
+      : 'Agora: mão esquerda',
+    description: rightStage
+      ? 'Levante somente a mão direita e mantenha a esquerda abaixada.'
+      : 'Abaixe a direita e levante somente a mão esquerda.',
+    message
+  };
 }
 
-function startCalibration() {
-  resetCalibration('Mostre as duas mãos, uma de cada lado do corpo.');
+function renderSensorStatus(status) {
+  const copy = copyForSensorStatus(status);
+  calibrationTitle.textContent = copy.title;
+  calibrationDescription.textContent = copy.description;
+  calibrationMessage.textContent = copy.message;
+  calibrationProgress.style.width = `${Math.round(Math.max(0, Math.min(1, status.progress ?? 0)) * 100)}%`;
+}
+
+function startCalibration(status = sensorStatus) {
+  sensorStatus = {
+    stage: status.stage || 'right',
+    progress: Number(status.progress || 0),
+    ready: Boolean(status.ready),
+    reason: status.reason || 'show-right'
+  };
+  renderSensorStatus(sensorStatus);
   setState('calibrating');
 }
 
 function showMenu() {
-  openingMenu = false;
-  sessionStorage.setItem(SESSION_KEY, '1');
   calibrationProgress.style.width = '100%';
   setState('menu');
   if (lastVisualFrame) cursor.updateFrame(lastVisualFrame);
 }
 
-function messageForStartup(result) {
-  switch (result.reason) {
-    case 'missing-frame':
-      return 'Afaste-se até aparecer a parte superior do corpo.';
-    case 'missing-hands':
-      return 'Mostre as duas mãos ao mesmo tempo.';
-    case 'missing-shoulders':
-      return 'Mantenha os ombros e as duas mãos dentro da câmera.';
-    case 'hands-too-close':
-      return 'Separe um pouco mais as mãos, uma de cada lado.';
-    case 'moving':
-      return 'Duas mãos reconhecidas. Mantenha-as paradas por um instante.';
-    default:
-      return 'Mostre as duas mãos para a câmera.';
-  }
-}
+function handleSensorCalibration(payload = {}) {
+  if (payload.command !== 'sensor-calibration') return;
+  sensorStatus = {
+    stage: payload.stage || 'right',
+    progress: Number(payload.progress || 0),
+    ready: Boolean(payload.ready),
+    reason: payload.reason || 'show-right'
+  };
 
-function updateCalibration(frame, now) {
-  const result = evaluateTwoHandStartup(frame, STARTUP);
-  if (!result.ready) {
-    resetCalibration(messageForStartup(result));
-    return;
-  }
-
-  if (!stableSince) stableSince = now;
-  const progress = Math.min(1, (now - stableSince) / STARTUP.holdMs);
-  calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
-  calibrationMessage.textContent = progress < 0.45
-    ? 'Duas mãos reconhecidas e separadas…'
-    : progress < 0.85
-      ? 'Fixando os dois rastros…'
-      : 'Tudo pronto!';
-
-  if (progress >= 1 && !openingMenu) {
-    openingMenu = true;
-    setTimeout(showMenu, 160);
+  if (sensorStatus.ready) {
+    renderSensorStatus(sensorStatus);
+    showMenu();
+  } else {
+    startCalibration(sensorStatus);
   }
 }
 
@@ -118,17 +132,22 @@ function updateConnection({ phone } = {}) {
   if (!phoneConnected) {
     handInput.reset();
     lastVisualFrame = null;
-    sessionStorage.removeItem(SESSION_KEY);
+    sensorStatus = {
+      stage: 'right',
+      progress: 0,
+      ready: false,
+      reason: 'show-right'
+    };
     setState('pairing');
     return;
   }
 
-  if (sessionStorage.getItem(SESSION_KEY) === '1') showMenu();
-  else startCalibration();
+  startCalibration(sensorStatus);
 }
 
 socket.on('room-status', updateConnection);
 socket.on('disconnect', () => updateConnection({ phone: false }));
+socket.on('game-command', handleSensorCalibration);
 socket.on('transport', ({ mode }) => {
   transportMode = mode;
   if (!phoneConnected) return;
@@ -143,8 +162,14 @@ socket.on('pose', (pose) => {
 });
 
 recalibrateButton?.addEventListener('click', () => {
-  sessionStorage.removeItem(SESSION_KEY);
-  startCalibration();
+  sensorStatus = {
+    stage: 'right',
+    progress: 0,
+    ready: false,
+    reason: 'show-right'
+  };
+  startCalibration(sensorStatus);
+  socket.emit('game-command', { command: 'recalibrate-sensors' });
 });
 
 fullscreenButton.addEventListener('click', async () => {
@@ -159,7 +184,6 @@ fullscreenButton.addEventListener('click', async () => {
 function frame(now) {
   const frames = handInput.sample(now);
   lastVisualFrame = frames.visual;
-  if (state === 'calibrating') updateCalibration(frames.visual, now);
   if (state === 'menu') cursor.updateFrame(frames.visual, now);
   requestAnimationFrame(frame);
 }
