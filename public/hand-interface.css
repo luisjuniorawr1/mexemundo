@@ -1,0 +1,68 @@
+.hand-action-cursor {
+  z-index: 1600;
+}
+
+.hand-action-cursor::after {
+  background: rgba(62, 48, 190, .92);
+}
+
+.hand-action-cursor.active {
+  opacity: 1;
+}
+
+[data-hand-action].motion-hover,
+[data-motion-target].motion-hover,
+summary[data-motion-target].motion-hover {
+  outline: 5px solid #ffcf4a;
+  outline-offset: 5px;
+  box-shadow: 0 0 0 10px rgba(255, 207, 74, .22), 0 18px 38px rgba(35, 28, 94, .25);
+}
+
+[data-hand-action].motion-pressing,
+[data-motion-target].motion-pressing,
+summary[data-motion-target].motion-pressing {
+  transform: scale(.975);
+  outline-color: #ff9f1c;
+  box-shadow: 0 0 0 12px rgba(255, 159, 28, .24), 0 12px 28px rgba(35, 28, 94, .22);
+}
+
+.hand-result-actions {
+  width: min(620px, 100%);
+  margin: 18px auto 6px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.hand-result-actions .button {
+  min-width: min(245px, 82vw);
+  min-height: 66px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 1.05rem;
+}
+
+.hand-action-hint {
+  margin: 10px auto 0;
+  max-width: 560px;
+  color: var(--muted);
+  font-weight: 850;
+  line-height: 1.4;
+}
+
+.motion-game-page .top-actions .icon-button.motion-hover,
+.motion-game-page .motion-back-button.motion-hover {
+  transform: scale(1.14);
+  outline: 5px solid #ffcf4a;
+  outline-offset: 4px;
+}
+
+@media (max-width: 720px) {
+  .hand-result-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+}
