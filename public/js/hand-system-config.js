@@ -55,7 +55,6 @@ const config = {
     maximumPredictionMs: 70,
     velocityBlend: 0.34,
     maximumAcceptedJump: 0.18,
-    measurementGraceMs: 180,
     lostResetMs: 520
   },
   filter: {
@@ -240,7 +239,6 @@ export function handSystemFingerprint() {
     identity.sourceLabelBias,
     identity.switchConfirmMs,
     identity.maximumAcceptedJump,
-    identity.measurementGraceMs,
     filter.wristRestDeadZone,
     visual.mode,
     visual.restEnterDistance,
