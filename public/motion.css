@@ -116,9 +116,9 @@
   border-radius: 50%;
   opacity: 0;
   pointer-events: none;
-  will-change: transform;
+  will-change: transform, scale;
   filter: drop-shadow(0 9px 16px rgba(31,20,76,.34));
-  transition: opacity .12s ease;
+  transition: opacity .12s ease, scale .10s ease;
 }
 
 .motion-cursor::before {
@@ -131,6 +131,10 @@
   mask: radial-gradient(circle, transparent 57%, #000 59%);
 }
 
+.motion-cursor.fist-mode::before {
+  background: rgba(255,255,255,.72);
+}
+
 .motion-cursor::after {
   content: '';
   position: absolute;
@@ -139,10 +143,16 @@
   border-radius: 50%;
   background: rgba(105,56,239,.88);
   box-shadow: inset 0 -7px 0 rgba(55,30,145,.24);
+  transition: background .10s ease, box-shadow .10s ease;
 }
 
 .motion-cursor span { position: relative; z-index: 2; font-size: 31px; }
 .motion-cursor.active { opacity: 1; }
+.motion-cursor.fist-closed { scale: .84; }
+.motion-cursor.fist-closed::after {
+  background: rgba(255,159,28,.95);
+  box-shadow: inset 0 -7px 0 rgba(143,75,0,.24);
+}
 .motion-cursor.selecting { animation: cursorSelect .22s ease-out; }
 @keyframes cursorSelect { 50% { scale: 1.3; } }
 
