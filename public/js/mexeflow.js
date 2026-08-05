@@ -11,13 +11,18 @@ function halfLifeAlpha(dtMs, halfLifeMs) {
   return 1 - (2 ** (-dtMs / halfLifeMs));
 }
 
+function smoothstep(value) {
+  const amount = clamp(value);
+  return amount * amount * (3 - 2 * amount);
+}
+
 /**
- * MexeFlow: resposta visual universal do MexeMundo.
+ * MexeFlow v2: resposta visual universal do MexeMundo.
  *
- * - trava ruído pequeno depois de um curto repouso;
- * - usa histerese para não alternar entre parado/movendo;
- * - acelera a resposta conforme velocidade e distância aumentam;
- * - limita o atraso visual sem tocar na saída de colisão.
+ * - reduz tremor com repouso suave, sem congelar a mão;
+ * - usa histerese para evitar alternância entre parado e movimento;
+ * - acelera progressivamente conforme velocidade e distância aumentam;
+ * - limita o atraso visual sem alterar a saída rápida de colisão.
  */
 export class MexeFlowPoint {
   constructor(fallback, config = DEFAULT_CONFIG) {
@@ -77,23 +82,43 @@ export class MexeFlowPoint {
     if (this.resting) {
       const leaveRest = speed >= this.config.restExitSpeed
         || distance >= this.config.restExitDistance;
-      if (!leaveRest) {
-        return { ...source, x: this.x, y: this.y };
-      }
-      this.resting = false;
-      this.restCandidateSince = 0;
-    } else {
-      const canRest = speed <= this.config.restEnterSpeed
-        && distance <= this.config.restEnterDistance;
-      if (canRest) {
-        if (!this.restCandidateSince) this.restCandidateSince = now;
-        if (now - this.restCandidateSince >= this.config.restHoldMs) {
-          this.resting = true;
-          return { ...source, x: this.x, y: this.y };
-        }
-      } else {
+
+      if (leaveRest) {
+        this.resting = false;
         this.restCandidateSince = 0;
+      } else {
+        // Em repouso, ruído microscópico não move a mão. Variações um pouco
+        // maiores são acompanhadas lentamente para evitar sensação de trava.
+        if (distance > this.config.restMicroDeadZone) {
+          const alpha = halfLifeAlpha(
+            dtMs,
+            this.config.restFollowHalfLifeMs
+          );
+          this.x += dx * alpha;
+          this.y += dy * alpha;
+        }
+        return {
+          ...source,
+          x: clamp(this.x),
+          y: clamp(this.y)
+        };
       }
+    }
+
+    const canRest = speed <= this.config.restEnterSpeed
+      && distance <= this.config.restEnterDistance;
+    if (canRest) {
+      if (!this.restCandidateSince) this.restCandidateSince = now;
+      if (now - this.restCandidateSince >= this.config.restHoldMs) {
+        this.resting = true;
+        return {
+          ...source,
+          x: clamp(this.x),
+          y: clamp(this.y)
+        };
+      }
+    } else {
+      this.restCandidateSince = 0;
     }
 
     if (distance >= this.config.snapDistance) {
@@ -103,39 +128,25 @@ export class MexeFlowPoint {
     }
 
     const speedAmount = clamp(speed / this.config.fastResponseSpeed);
-    const distanceAmount = clamp(distance / this.config.fastResponseDistance);
-    const urgency = Math.max(speedAmount, distanceAmount);
+    const distanceAmount = clamp(
+      distance / this.config.fastResponseDistance
+    );
+    const urgency = smoothstep(Math.max(speedAmount, distanceAmount));
     const halfLifeMs = this.config.slowHalfLifeMs
       + (this.config.fastHalfLifeMs - this.config.slowHalfLifeMs) * urgency;
-
-    let targetX = source.x;
-    let targetY = source.y;
-    if (speed >= this.config.lookaheadMinimumSpeed) {
-      const lookaheadSeconds = this.config.lookaheadMs / 1000;
-      const lookaheadX = clamp(
-        source.vx * lookaheadSeconds,
-        -this.config.maximumLookaheadDistance,
-        this.config.maximumLookaheadDistance
-      );
-      const lookaheadY = clamp(
-        source.vy * lookaheadSeconds,
-        -this.config.maximumLookaheadDistance,
-        this.config.maximumLookaheadDistance
-      );
-      targetX = clamp(source.x + lookaheadX);
-      targetY = clamp(source.y + lookaheadY);
-    }
-
     const alpha = halfLifeAlpha(dtMs, halfLifeMs);
-    this.x += (targetX - this.x) * alpha;
-    this.y += (targetY - this.y) * alpha;
 
-    // Não deixa a mão desenhada ficar muito atrás da mão real.
+    this.x += (source.x - this.x) * alpha;
+    this.y += (source.y - this.y) * alpha;
+
+    // A mão desenhada nunca fica excessivamente atrás da posição detectada.
     dx = source.x - this.x;
     dy = source.y - this.y;
     distance = Math.hypot(dx, dy);
     if (distance > this.config.maximumLagDistance) {
-      const amount = (distance - this.config.maximumLagDistance) / distance;
+      const amount = (
+        distance - this.config.maximumLagDistance
+      ) / distance;
       this.x += dx * amount;
       this.y += dy * amount;
     }
