@@ -1,7 +1,7 @@
-import { FistActivation } from './fist-activation.js';
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
+import { StableDwellActivation } from './stable-dwell-activation.js';
 
-const GESTURE = HAND_SYSTEM_CONFIG.gesture;
+const MENU = HAND_SYSTEM_CONFIG.menu;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -15,11 +15,10 @@ function viewportSize() {
 }
 
 /**
- * Cursor universal do menu.
+ * Cursor universal do menu alimentado pela saída visual MexeFlow.
  *
- * A posição vem do MexeFlow. A opção é capturada quando o fechamento começa,
- * para que o pequeno deslocamento natural do pulso ao fechar a mão não faça o
- * cursor perder o botão antes do clique.
+ * A seleção acontece mantendo uma das mãos sobre o mesmo item por cinco
+ * segundos. O progresso tolera tremor humano e não depende dos dedos.
  */
 export class UniversalMenuCursor {
   constructor({
@@ -38,13 +37,13 @@ export class UniversalMenuCursor {
     this.y = 0.5;
     this.visible = false;
     this.hoverTarget = null;
-    this.pressTarget = null;
-    this.cooldownUntil = 0;
     this.lastValidAt = 0;
-    this.activation = new FistActivation({ side: GESTURE.sideUsedForMenus });
-    this.element.classList.add('fist-mode');
+    this.activeHand = null;
+    this.dwell = new StableDwellActivation();
+    this.element.classList.remove('fist-mode');
     this.element.style.setProperty('--dwell', '0');
     this.element.style.setProperty('--close', '0');
+    if (this.icon) this.icon.textContent = '✋';
     this.render();
   }
 
@@ -53,32 +52,38 @@ export class UniversalMenuCursor {
     if (!this.enabled) this.hide();
   }
 
-  clearPressTarget() {
-    this.pressTarget?.classList.remove('motion-pressing');
-    this.pressTarget = null;
-  }
-
   hide() {
     this.visible = false;
+    this.activeHand = null;
     this.element.classList.remove(
       'active',
       'fist-closed',
       'fist-armed',
       'fist-pressing'
     );
-    this.element.style.setProperty('--close', '0');
-    if (this.icon) this.icon.textContent = '✋';
-    this.activation.reset();
-    this.clearPressTarget();
+    this.dwell.reset();
     this.resetHover();
+    if (this.icon) this.icon.textContent = '✋';
   }
 
   resetHover() {
-    if (this.hoverTarget !== this.pressTarget) {
-      this.hoverTarget?.classList.remove('motion-hover');
-    }
+    this.hoverTarget?.classList.remove('motion-hover', 'motion-pressing');
     this.hoverTarget = null;
     this.element.style.setProperty('--dwell', '0');
+  }
+
+  selectHand(frame) {
+    const preferred = frame?.[MENU.preferredHand];
+    if (preferred?.visible) {
+      return { side: MENU.preferredHand, point: preferred };
+    }
+
+    const fallback = frame?.[MENU.fallbackHand];
+    if (fallback?.visible) {
+      return { side: MENU.fallbackHand, point: fallback };
+    }
+
+    return null;
   }
 
   mapHand(point) {
@@ -95,28 +100,48 @@ export class UniversalMenuCursor {
       return;
     }
 
-    const mapped = frame?.fresh && frame?.detected
-      ? this.mapHand(frame.right)
+    const selectedHand = frame?.fresh && frame?.detected
+      ? this.selectHand(frame)
       : null;
+    const mapped = selectedHand ? this.mapHand(selectedHand.point) : null;
 
     if (!mapped) {
-      if (this.visible && now - this.lastValidAt <= 220) {
-        this.updateHover();
-        this.updateGesture(frame, now);
-        return;
-      }
+      if (this.visible && now - this.lastValidAt <= MENU.missingGraceMs) return;
       this.hide();
       return;
     }
 
+    if (this.activeHand && selectedHand.side !== this.activeHand) {
+      this.dwell.reset();
+      this.resetHover();
+    }
+    this.activeHand = selectedHand.side;
     this.x = mapped.x;
     this.y = mapped.y;
     this.lastValidAt = now;
     this.visible = true;
     this.element.classList.add('active');
     this.render();
-    this.updateHover();
-    this.updateGesture(frame, now);
+
+    const target = this.updateHover();
+    const dwellState = this.dwell.update({
+      target,
+      x: this.x,
+      y: this.y,
+      visible: true
+    }, now);
+    this.element.style.setProperty('--dwell', String(dwellState.progress));
+
+    if (!dwellState.activate) return;
+    const selectedTarget = dwellState.target;
+    if (!selectedTarget?.isConnected) return;
+
+    this.element.classList.add('selecting');
+    setTimeout(() => this.element.classList.remove('selecting'), 220);
+    this.resetHover();
+
+    if (typeof this.onSelect === 'function') this.onSelect(selectedTarget);
+    else selectedTarget.click();
   }
 
   render() {
@@ -124,7 +149,7 @@ export class UniversalMenuCursor {
     this.element.style.transform = `translate3d(${this.x * viewport.width}px, ${this.y * viewport.height}px, 0) translate(-50%, -50%)`;
   }
 
-  pointInsideTarget(target, x, y, margin = 52) {
+  pointInsideTarget(target, x, y, margin = MENU.targetExitMarginPx) {
     if (!target?.isConnected) return false;
     const rect = target.getBoundingClientRect();
     return x >= rect.left - margin
@@ -149,65 +174,16 @@ export class UniversalMenuCursor {
     }
 
     if (!target || target.matches('[disabled], [aria-disabled="true"]')) {
-      if (!this.pressTarget) this.resetHover();
-      return;
+      this.resetHover();
+      return null;
     }
 
     if (target !== this.hoverTarget) {
-      if (this.hoverTarget !== this.pressTarget) {
-        this.hoverTarget?.classList.remove('motion-hover');
-      }
+      this.hoverTarget?.classList.remove('motion-hover', 'motion-pressing');
       this.hoverTarget = target;
       target.classList.add('motion-hover');
     }
-  }
 
-  latchTarget(closure, pressing = false) {
-    if (
-      !this.pressTarget
-      && this.hoverTarget
-      && (
-        pressing
-        || closure >= GESTURE.targetLatchClosure
-      )
-    ) {
-      this.pressTarget = this.hoverTarget;
-      this.pressTarget.classList.add('motion-pressing');
-    }
-  }
-
-  updateGesture(frame, now) {
-    const state = this.activation.update(frame, now);
-    const closure = clamp(state.closure || 0);
-    this.element.style.setProperty('--close', String(closure));
-    this.element.classList.toggle('fist-closed', state.closed);
-    this.element.classList.toggle('fist-armed', state.armed);
-    this.element.classList.toggle('fist-pressing', state.pressing);
-    if (this.icon) this.icon.textContent = state.closed ? '✊' : '✋';
-
-    this.latchTarget(closure, state.pressing);
-
-    if (
-      !state.closed
-      && !state.pressing
-      && closure <= GESTURE.targetReleaseClosure
-    ) {
-      this.clearPressTarget();
-    }
-
-    if (!state.activate || now < this.cooldownUntil) return;
-
-    const selectedTarget = this.pressTarget ?? this.hoverTarget;
-    if (!selectedTarget?.isConnected) return;
-
-    this.cooldownUntil = now + GESTURE.clickCooldownMs;
-    this.element.classList.add('selecting');
-    setTimeout(() => this.element.classList.remove('selecting'), 220);
-
-    this.clearPressTarget();
-    this.resetHover();
-
-    if (typeof this.onSelect === 'function') this.onSelect(selectedTarget);
-    else selectedTarget.click();
+    return target;
   }
 }
