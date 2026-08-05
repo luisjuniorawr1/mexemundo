@@ -13,6 +13,7 @@ function advance(dwell, target, startAt, durationMs, movement = 0.001) {
       y: 0.5 - movement * direction,
       visible: true
     }, startAt + elapsed);
+    if (state.activate) return state;
   }
   return state;
 }
