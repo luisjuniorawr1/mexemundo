@@ -3,13 +3,14 @@ import {
   HAND_SYSTEM_CONFIG,
   MEDIAPIPE_TASKS_VERSION
 } from './hand-system-config.js';
-import { createHandIdentityGuard } from './hand-identity-guard.js';
 import { createPoseFistGestureTracker } from './pose-gesture.js';
+import { createSequentialHandBinder } from './sequential-hand-binder.js';
 
 const CAMERA = HAND_SYSTEM_CONFIG.camera;
 const DETECTOR = HAND_SYSTEM_CONFIG.detector;
 const FILTER = HAND_SYSTEM_CONFIG.filter;
 const SCHEDULER = HAND_SYSTEM_CONFIG.scheduler;
+const SENSOR_CALIBRATION = HAND_SYSTEM_CONFIG.sensorCalibration;
 const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
 let visionModulePromise = null;
@@ -27,6 +28,11 @@ const processingValue = document.querySelector('#processingValue');
 const sendValue = document.querySelector('#sendValue');
 const roomValue = document.querySelector('#roomValue');
 const poseQuality = document.querySelector('#poseQuality');
+const calibrationStep = document.querySelector('#sensorCalibrationStep');
+const calibrationInstruction = document.querySelector('#sensorCalibrationInstruction');
+const calibrationHint = document.querySelector('#sensorCalibrationHint');
+const calibrationProgress = document.querySelector('#sensorCalibrationProgress');
+const calibrationPanel = document.querySelector('#sensorCalibrationPanel');
 
 const POINTS = {
   left: 15,
@@ -37,7 +43,7 @@ const POINTS = {
 const POINT_NAMES = Object.keys(POINTS);
 const WRISTS = new Set(['left', 'right']);
 const filters = new Map();
-const identityGuard = createHandIdentityGuard();
+const handBinder = createSequentialHandBinder();
 const gestureTracker = createPoseFistGestureTracker();
 
 overlay.style.display = 'none';
@@ -54,6 +60,8 @@ let sequence = 0;
 let previousFrameAt = 0;
 let transportMode = 'relay';
 let activeStream = null;
+let lastCalibrationBroadcastAt = 0;
+let lastCalibrationStatusKey = '';
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -186,10 +194,17 @@ function getFilter(name) {
   return filters.get(name);
 }
 
-function resetTrackingState() {
+function resetOutputFilters() {
   for (const filter of filters.values()) filter.reset();
-  identityGuard.reset();
   gestureTracker.reset();
+}
+
+function restartSensorCalibration() {
+  handBinder.reset();
+  resetOutputFilters();
+  lastCalibrationStatusKey = '';
+  renderCalibration(handBinder.status());
+  broadcastCalibration(handBinder.status(), performance.now(), true);
 }
 
 function filteredPoint(name, landmark, now) {
@@ -263,14 +278,81 @@ function averageVisibility(pose) {
   ) / POINT_NAMES.length;
 }
 
+function calibrationCopy(status) {
+  if (status.ready) {
+    return {
+      step: 'SENSORES CONFIGURADOS',
+      instruction: 'Direita e esquerda estão presas aos sensores configurados.',
+      hint: 'Agora você pode jogar normalmente com as duas mãos.'
+    };
+  }
+
+  const sideName = status.stage === 'right' ? 'direita' : 'esquerda';
+  const stepNumber = status.stage === 'right' ? '1 DE 2' : '2 DE 2';
+  let hint = `Levante somente a mão ${sideName} e mantenha a outra abaixada.`;
+
+  if (status.reason === 'lower-other-hand') {
+    hint = 'Abaixe completamente a outra mão para não misturar os sensores.';
+  } else if (status.reason === 'hold-still') {
+    hint = `Mão ${sideName} encontrada. Mantenha-a parada até completar.`;
+  }
+
+  return {
+    step: `CONFIGURAÇÃO ${stepNumber}`,
+    instruction: `Mostre somente a mão ${sideName}.`,
+    hint
+  };
+}
+
+function renderCalibration(status) {
+  const copy = calibrationCopy(status);
+  calibrationPanel?.classList.toggle('ready', status.ready);
+  calibrationStep.textContent = copy.step;
+  calibrationInstruction.textContent = copy.instruction;
+  calibrationHint.textContent = copy.hint;
+  calibrationProgress.style.width = `${Math.round(clamp(status.progress) * 100)}%`;
+
+  if (status.ready) {
+    trackingStatus.textContent = `${transportMode === 'direct' ? 'Rastreamento rápido direto' : 'Rastreamento rápido via servidor'} • sensores separados ativos`;
+  } else {
+    trackingStatus.textContent = copy.instruction;
+  }
+}
+
+function calibrationStatusKey(status) {
+  return [
+    status.stage,
+    status.reason,
+    Math.round(clamp(status.progress) * 20),
+    status.ready ? 1 : 0
+  ].join(':');
+}
+
+function broadcastCalibration(status, now, force = false) {
+  const key = calibrationStatusKey(status);
+  const changed = key !== lastCalibrationStatusKey;
+  if (
+    !force
+    && !changed
+    && now - lastCalibrationBroadcastAt < SENSOR_CALIBRATION.statusBroadcastIntervalMs
+  ) return;
+
+  lastCalibrationBroadcastAt = now;
+  lastCalibrationStatusKey = key;
+  socket.emit('game-command', {
+    command: 'sensor-calibration',
+    stage: status.stage,
+    progress: clamp(status.progress),
+    ready: Boolean(status.ready),
+    reason: status.reason
+  });
+}
+
 function emitPose(pose, detected, now, processingMs) {
   const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
   previousFrameAt = now;
-  const stablePose = detected
-    ? identityGuard.stabilize(pose, now)
-    : null;
   const gestures = detected
-    ? gestureTracker.update(stablePose, now)
+    ? gestureTracker.update(pose, now)
     : gestureTracker.missing(now);
 
   const payload = {
@@ -280,21 +362,27 @@ function emitPose(pose, detected, now, processingMs) {
     processingMs: Math.round(processingMs),
     sourceIntervalMs: Math.round(sourceIntervalMs),
     left: detected
-      ? filteredPoint('left', stablePose[POINTS.left], now)
+      ? filteredPoint('left', pose[POINTS.left], now)
       : hiddenPoint(0.35, 0.55),
     right: detected
-      ? filteredPoint('right', stablePose[POINTS.right], now)
+      ? filteredPoint('right', pose[POINTS.right], now)
       : hiddenPoint(0.65, 0.55),
     leftShoulder: detected
-      ? filteredPoint('leftShoulder', stablePose[POINTS.leftShoulder], now)
+      ? filteredPoint('leftShoulder', pose[POINTS.leftShoulder], now)
       : hiddenPoint(0.44, 0.35),
     rightShoulder: detected
-      ? filteredPoint('rightShoulder', stablePose[POINTS.rightShoulder], now)
+      ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now)
       : hiddenPoint(0.56, 0.35),
     gestures
   };
 
   if (socket.emit('pose', payload)) sentCounter += 1;
+}
+
+function emitHiddenPose(now, processingMs) {
+  if (now - missingPoseSentAt < SCHEDULER.emptyFrameIntervalMs) return;
+  emitPose(null, false, now, processingMs);
+  missingPoseSentAt = now;
 }
 
 function schedulePrediction() {
@@ -315,32 +403,37 @@ function processFrame(now, metadata) {
     const startedAt = performance.now();
     const result = landmarker.detectForVideo(video, startedAt);
     const processingMs = performance.now() - startedAt;
-    const pose = result.landmarks?.[0];
+    const rawPose = result.landmarks?.[0];
     const current = performance.now();
 
     processingValue.textContent = `${Math.round(processingMs)} ms`;
 
-    if (pose) {
+    if (rawPose) {
       lastPoseAt = current;
-      const quality = averageVisibility(pose);
+      const quality = averageVisibility(rawPose);
       poseQuality.textContent = `${Math.round(quality * 100)}%`;
       poseQuality.className = `quality-badge ${quality > 0.7 ? 'good' : quality > 0.48 ? 'medium' : 'low'}`;
 
-      const wristsVisible = (pose[POINTS.left]?.visibility ?? 0) > DETECTOR.pointVisibilityConfidence
-        && (pose[POINTS.right]?.visibility ?? 0) > DETECTOR.pointVisibilityConfidence;
-      trackingStatus.textContent = wristsVisible
-        ? `${transportMode === 'direct' ? 'Rastreamento rápido direto' : 'Rastreamento rápido via servidor'} • abra e feche a mão para testar`
-        : 'Mostre as duas mãos para a câmera.';
-      emitPose(pose, true, current, processingMs);
+      const bindingResult = handBinder.update(rawPose, current);
+      renderCalibration(bindingResult.status);
+      broadcastCalibration(bindingResult.status, current);
+
+      if (bindingResult.pose) {
+        emitPose(bindingResult.pose, true, current, processingMs);
+      } else {
+        emitHiddenPose(current, processingMs);
+      }
     } else {
       poseQuality.textContent = '0%';
       poseQuality.className = 'quality-badge low';
-      trackingStatus.textContent = 'Afaste-se até aparecer a parte superior do corpo.';
-      if (current - lastPoseAt > 250) resetTrackingState();
-      if (current - missingPoseSentAt >= SCHEDULER.emptyFrameIntervalMs) {
-        emitPose(null, false, current, processingMs);
-        missingPoseSentAt = current;
-      }
+      const status = handBinder.status();
+      renderCalibration(status);
+      broadcastCalibration(status, current);
+      trackingStatus.textContent = status.ready
+        ? 'Afaste-se até aparecer a parte superior do corpo.'
+        : calibrationCopy(status).instruction;
+      if (current - lastPoseAt > 250) resetOutputFilters();
+      emitHiddenPose(current, processingMs);
     }
 
     if (current - sentWindow >= 1000) {
@@ -360,6 +453,8 @@ socket.on('transport', ({ mode }) => {
     ? `RÁPIDO • ${room}`
     : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
+  renderCalibration(handBinder.status());
+  broadcastCalibration(handBinder.status(), performance.now(), true);
 });
 
 socket.on('room-status', ({ tv }) => {
@@ -368,6 +463,11 @@ socket.on('room-status', ({ tv }) => {
     ? `${transportMode === 'direct' ? 'RÁPIDO' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
+  if (tv) broadcastCalibration(handBinder.status(), performance.now(), true);
+});
+
+socket.on('game-command', (payload = {}) => {
+  if (payload.command === 'recalibrate-sensors') restartSensorCalibration();
 });
 
 socket.on('disconnect', () => {
@@ -405,6 +505,7 @@ startButton.addEventListener('click', async () => {
       : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
+    restartSensorCalibration();
     schedulePrediction();
   } catch (error) {
     console.error(error);
