@@ -63,7 +63,7 @@ const config = {
     maximumWristPalmDisagreement: 0.11,
     maximumSensorJump: 0.24,
     dropoutHoldMs: 180,
-    reacquireAfterMs: 350,
+    reacquireAfterMs: 180,
     trustedOutputVisibility: 0.25,
     statusBroadcastIntervalMs: 300
   },
