@@ -10,11 +10,15 @@ function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
-function pointVisible(point) {
+function finitePoint(point) {
   return point
     && Number.isFinite(point.x)
-    && Number.isFinite(point.y)
-    && (point.visibility ?? 0) >= CONFIG.minimumVisibility;
+    && Number.isFinite(point.y);
+}
+
+function pointVisible(point, threshold = CONFIG.minimumVisibility) {
+  return finitePoint(point)
+    && (point.visibility ?? 0) >= threshold;
 }
 
 function mirrored(point) {
@@ -45,11 +49,33 @@ function hiddenPoint(point) {
 function extractGroup(pose, side) {
   const indices = GROUPS[side];
   const points = indices.map((index) => copyPoint(pose?.[index]));
+  const wristVisible = pointVisible(points[0]);
+  const supportCount = points
+    .slice(1)
+    .filter((point) => pointVisible(point, CONFIG.palmSupportVisibility))
+    .length;
+  const palmSupported = finitePoint(points[0])
+    && supportCount >= CONFIG.minimumPalmSupportPoints;
+
+  if (!wristVisible && palmSupported) {
+    // O Pose ainda fornece a posição estimada do pulso quando a palma está
+    // voltada para a câmera. Dois pontos de dedos confirmam que a mão existe;
+    // apenas elevamos a confiança, sem alterar x/y nem a curva de movimento.
+    points[0].visibility = Math.max(
+      points[0].visibility ?? 0,
+      CONFIG.palmTrustedWristVisibility
+    );
+    points[0].presence = Math.max(
+      points[0].presence ?? 0,
+      CONFIG.palmTrustedWristVisibility
+    );
+  }
+
   return {
     side,
     points,
     wrist: points[0],
-    visible: pointVisible(points[0])
+    visible: wristVisible || palmSupported
   };
 }
 
@@ -108,8 +134,9 @@ class IdentityTrack {
 }
 
 /**
- * Mantém a identidade física das mãos quando elas cruzam, se aproximam ou
- * quando o Pose Landmarker troca temporariamente os lados detectados.
+ * Mantém a identidade física das mãos quando as duas estão visíveis.
+ * Quando apenas uma aparece, preserva obrigatoriamente o lado anatômico
+ * informado pelo Pose Landmarker; uma mão isolada nunca rouba a outra.
  */
 export class HandIdentityGuard {
   constructor() {
@@ -195,8 +222,6 @@ export class HandIdentityGuard {
           this.candidateSince = 0;
         }
 
-        // Uma troca muito clara é corrigida já no quadro atual; trocas
-        // ambíguas perto do cruzamento preservam a identidade anterior.
         const frameAssignment = Math.abs(directCost - swappedCost)
           >= CONFIG.emergencySwapAdvantage
           ? proposed
@@ -211,22 +236,12 @@ export class HandIdentityGuard {
         }
       }
     } else {
-      const onlyGroup = source.left.visible ? source.left : source.right;
-      const leftCost = this.tracks.left.ready
-        ? this.tracks.left.cost(onlyGroup.wrist, now)
-        : Infinity;
-      const rightCost = this.tracks.right.ready
-        ? this.tracks.right.cost(onlyGroup.wrist, now)
-        : Infinity;
-
-      if (leftCost === Infinity && rightCost === Infinity) {
-        if (onlyGroup.side === 'left') stableLeft = onlyGroup;
-        else stableRight = onlyGroup;
-      } else if (leftCost <= rightCost) {
-        stableLeft = onlyGroup;
-      } else {
-        stableRight = onlyGroup;
-      }
+      // Correção central: nunca reatribui uma mão isolada por proximidade.
+      // O lado anatômico do Pose é mantido até as duas mãos reaparecerem.
+      if (source.left.visible) stableLeft = source.left;
+      if (source.right.visible) stableRight = source.right;
+      this.candidate = this.assignment;
+      this.candidateSince = 0;
     }
 
     const accept = (side, group) => {
