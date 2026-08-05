@@ -43,12 +43,12 @@
       </section>
 
       <section id="calibrationPanel" class="modal-card calibration-panel hidden">
-        <div class="mascot">🧤</div>
-        <span class="eyebrow">AJUSTE DENTRO DO JOGO</span>
-        <h2>Levante as duas mãos abertas</h2>
-        <p>Mantenha as mãos levantadas e paradas por alguns segundos. O celular mede cada mão antes de liberar a contagem da partida.</p>
+        <div class="mascot">🙋</div>
+        <span class="eyebrow">PRONTO PARA COMEÇAR</span>
+        <h2>Levante uma mão</h2>
+        <p>Mantenha uma mão acima do ombro por um instante. As duas mãos continuam funcionando normalmente durante a partida.</p>
         <div class="calibration-meter"><span id="calibrationProgress"></span></div>
-        <strong id="calibrationMessage">Procurando as duas mãos…</strong>
+        <strong id="calibrationMessage">Procurando uma mão levantada…</strong>
       </section>
 
       <section id="countdownPanel" class="countdown-panel hidden" aria-live="assertive">
@@ -65,7 +65,7 @@
         </div>
         <p id="resultMessage">Você protegeu muito bem o gol!</p>
         <button id="restartButton" class="button primary" data-motion-target type="button">Jogar novamente</button>
-        <p class="gesture-tip">Também dá para levantar as duas mãos por 2 segundos.</p>
+        <p class="gesture-tip">Também dá para levantar uma mão por alguns instantes.</p>
       </section>
 
       <div id="saveCallout" class="goalkeeper-callout hidden" aria-live="polite">DEFESA!</div>
@@ -81,6 +81,6 @@
   </main>
 
   <div id="motionCursor" class="motion-cursor" aria-hidden="true"><span>✋</span></div>
-  <script type="module" src="/js/goalkeeper.js"></script>
+  <script type="module" src="/js/goalkeeper-entry.js"></script>
 </body>
 </html>
