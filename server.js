@@ -59,7 +59,7 @@ const server = http.createServer((req, res) => {
       profile: 'universal-runtime-configuration',
       tracking: 'pose-landmarker-lite-single-pass-reference-0.6.0',
       identity: 'sticky-anatomical-two-hand-v2-no-single-hand-steal',
-      identityRecovery: 'rejected-measurement-hold-180ms-trusted-wrist',
+      identityRecovery: 'rejected-measurement-uses-visual-220ms-collision-80ms-bridge',
       visualResponse: 'mexeflow-v2-progressive-catch-up-no-hard-snap',
       gesture: 'not-required-for-interface-selection',
       shoulders: 'same-pose-inference',
