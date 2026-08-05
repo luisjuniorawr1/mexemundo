@@ -31,11 +31,18 @@
     <section id="cameraPanel" class="camera-panel hidden">
       <div class="camera-header phone-card">
         <div>
-          <span class="eyebrow">DUAS MÃOS</span>
+          <span class="eyebrow">SENSORES SEPARADOS</span>
           <strong id="trackingStatus">Preparando câmera…</strong>
         </div>
         <span id="poseQuality" class="quality-badge">0%</span>
       </div>
+
+      <section id="sensorCalibrationPanel" class="phone-card sensor-calibration-panel" aria-live="polite">
+        <span id="sensorCalibrationStep" class="eyebrow">CONFIGURAÇÃO 1 DE 2</span>
+        <strong id="sensorCalibrationInstruction">Mostre somente a mão direita.</strong>
+        <div class="calibration-meter"><span id="sensorCalibrationProgress"></span></div>
+        <p id="sensorCalibrationHint" class="helper-text">Levante somente a mão direita e mantenha a esquerda abaixada.</p>
+      </section>
 
       <div class="video-wrap">
         <video id="camera" autoplay playsinline muted></video>
@@ -49,7 +56,7 @@
         <div><span>Sala</span><strong id="roomValue">----</strong></div>
       </div>
 
-      <p class="phone-safety">Apoie o celular em um local firme. Ao entrar no jogo, levante as duas mãos abertas e mantenha-as paradas até a contagem começar.</p>
+      <p class="phone-safety">Apoie o celular em um local firme. Primeiro configure a mão direita e depois a esquerda. Durante o jogo, cada mão permanecerá presa ao sensor que foi configurado para ela.</p>
     </section>
   </main>
 
