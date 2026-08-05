@@ -60,7 +60,12 @@ export class UniversalMenuCursor {
 
   hide() {
     this.visible = false;
-    this.element.classList.remove('active', 'fist-closed', 'fist-armed');
+    this.element.classList.remove(
+      'active',
+      'fist-closed',
+      'fist-armed',
+      'fist-pressing'
+    );
     this.element.style.setProperty('--close', '0');
     if (this.icon) this.icon.textContent = '✋';
     this.activation.reset();
@@ -157,11 +162,14 @@ export class UniversalMenuCursor {
     }
   }
 
-  latchTarget(closure) {
+  latchTarget(closure, pressing = false) {
     if (
       !this.pressTarget
       && this.hoverTarget
-      && closure >= GESTURE.targetLatchClosure
+      && (
+        pressing
+        || closure >= GESTURE.targetLatchClosure
+      )
     ) {
       this.pressTarget = this.hoverTarget;
       this.pressTarget.classList.add('motion-pressing');
@@ -169,16 +177,21 @@ export class UniversalMenuCursor {
   }
 
   updateGesture(frame, now) {
-    const state = this.activation.update(frame);
+    const state = this.activation.update(frame, now);
     const closure = clamp(state.closure || 0);
     this.element.style.setProperty('--close', String(closure));
     this.element.classList.toggle('fist-closed', state.closed);
     this.element.classList.toggle('fist-armed', state.armed);
+    this.element.classList.toggle('fist-pressing', state.pressing);
     if (this.icon) this.icon.textContent = state.closed ? '✊' : '✋';
 
-    this.latchTarget(closure);
+    this.latchTarget(closure, state.pressing);
 
-    if (!state.closed && closure <= GESTURE.targetReleaseClosure) {
+    if (
+      !state.closed
+      && !state.pressing
+      && closure <= GESTURE.targetReleaseClosure
+    ) {
       this.clearPressTarget();
     }
 
