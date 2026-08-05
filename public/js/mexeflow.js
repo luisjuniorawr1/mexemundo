@@ -17,12 +17,13 @@ function smoothstep(value) {
 }
 
 /**
- * MexeFlow v2: resposta visual universal do MexeMundo.
+ * MexeFlow v2 anti-pull: resposta visual universal do MexeMundo.
  *
  * - reduz tremor com repouso suave, sem congelar a mão;
  * - usa histerese para evitar alternância entre parado e movimento;
  * - acelera progressivamente conforme velocidade e distância aumentam;
- * - limita o atraso visual sem alterar a saída rápida de colisão.
+ * - limita a correção por quadro para impedir puxadas e teletransportes;
+ * - não altera a saída rápida usada pelas colisões.
  */
 export class MexeFlowPoint {
   constructor(fallback, config = DEFAULT_CONFIG) {
@@ -58,12 +59,18 @@ export class MexeFlowPoint {
   update(source, now) {
     if (!source.visible) return this.missing(source, now);
 
+    const missingGapMs = this.lastVisibleAt
+      ? Math.max(0, now - this.lastVisibleAt)
+      : 0;
     this.lastVisibleAt = now;
-    if (!this.ready) {
+
+    if (!this.ready || missingGapMs > this.config.reacquireResetMs) {
       this.ready = true;
       this.x = source.x;
       this.y = source.y;
       this.lastAt = now;
+      this.restCandidateSince = 0;
+      this.resting = false;
       return { ...source, x: this.x, y: this.y };
     }
 
@@ -121,12 +128,6 @@ export class MexeFlowPoint {
       this.restCandidateSince = 0;
     }
 
-    if (distance >= this.config.snapDistance) {
-      this.x = source.x;
-      this.y = source.y;
-      return { ...source, x: this.x, y: this.y };
-    }
-
     const speedAmount = clamp(speed / this.config.fastResponseSpeed);
     const distanceAmount = clamp(
       distance / this.config.fastResponseDistance
@@ -136,25 +137,49 @@ export class MexeFlowPoint {
       + (this.config.fastHalfLifeMs - this.config.slowHalfLifeMs) * urgency;
     const alpha = halfLifeAlpha(dtMs, halfLifeMs);
 
-    this.x += (source.x - this.x) * alpha;
-    this.y += (source.y - this.y) * alpha;
+    const previousX = this.x;
+    const previousY = this.y;
+    let desiredX = this.x + (source.x - this.x) * alpha;
+    let desiredY = this.y + (source.y - this.y) * alpha;
 
-    // A mão desenhada nunca fica excessivamente atrás da posição detectada.
-    dx = source.x - this.x;
-    dy = source.y - this.y;
+    // Quando a mão visual fica atrás, recupera o excesso de forma gradual.
+    // A versão anterior eliminava todo o excesso no mesmo quadro, causando a
+    // puxada brusca percebida durante alguns arrastos.
+    dx = source.x - desiredX;
+    dy = source.y - desiredY;
     distance = Math.hypot(dx, dy);
     if (distance > this.config.maximumLagDistance) {
-      const amount = (
-        distance - this.config.maximumLagDistance
-      ) / distance;
-      this.x += dx * amount;
-      this.y += dy * amount;
+      const catchUpAlpha = halfLifeAlpha(
+        dtMs,
+        this.config.lagCatchUpHalfLifeMs
+      );
+      const excess = (distance - this.config.maximumLagDistance) / distance;
+      desiredX += dx * excess * catchUpAlpha;
+      desiredY += dy * excess * catchUpAlpha;
     }
+
+    let stepX = desiredX - previousX;
+    let stepY = desiredY - previousY;
+    const stepDistance = Math.hypot(stepX, stepY);
+    const maximumStep = Math.min(
+      this.config.maximumStepDistance,
+      this.config.maximumStepBase
+        + speed * (dtMs / 1000) * this.config.maximumStepSpeedGain
+    );
+
+    if (stepDistance > maximumStep && stepDistance > 0) {
+      const scale = maximumStep / stepDistance;
+      stepX *= scale;
+      stepY *= scale;
+    }
+
+    this.x = clamp(previousX + stepX);
+    this.y = clamp(previousY + stepY);
 
     return {
       ...source,
-      x: clamp(this.x),
-      y: clamp(this.y)
+      x: this.x,
+      y: this.y
     };
   }
 }
