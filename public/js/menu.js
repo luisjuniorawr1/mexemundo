@@ -22,7 +22,7 @@ const recalibrateButton = document.querySelector('#recalibrateButton');
 const fullscreenButton = document.querySelector('#fullscreenButton');
 const gameLinks = [...document.querySelectorAll('[data-game-path]')];
 
-const SESSION_KEY = `mexemundo-hand-session-ready-v2:${room}`;
+const SESSION_KEY = `mexemundo-hand-session-ready-v3:${room}`;
 const STARTUP = HAND_SYSTEM_CONFIG.startupCheck;
 
 roomCode.textContent = room;
@@ -56,7 +56,7 @@ function resetCalibration(message = 'Mostre as duas mãos para a câmera.') {
 }
 
 function startCalibration() {
-  resetCalibration('Mostre as duas mãos abertas e os ombros para a câmera.');
+  resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
   setState('calibrating');
 }
 
@@ -78,23 +78,9 @@ function handsReady(frame) {
   return true;
 }
 
-function handsOpen(frame) {
-  if (!STARTUP.requireOpenHands) return true;
-  const states = [
-    frame?.gestures?.left?.state,
-    frame?.gestures?.right?.state
-  ];
-  return states.every((gesture) => gesture === 'open');
-}
-
 function updateCalibration(frame, now) {
   if (!handsReady(frame)) {
     resetCalibration('Mostre as duas mãos e os ombros para a câmera.');
-    return;
-  }
-
-  if (!handsOpen(frame)) {
-    resetCalibration('Abra as duas mãos para confirmar o gesto.');
     return;
   }
 
@@ -120,7 +106,7 @@ function updateCalibration(frame, now) {
   const progress = Math.min(1, (now - stableSince) / STARTUP.holdMs);
   calibrationProgress.style.width = `${Math.round(progress * 100)}%`;
   calibrationMessage.textContent = progress < 0.45
-    ? 'Duas mãos abertas reconhecidas…'
+    ? 'Duas mãos reconhecidas…'
     : progress < 0.85
       ? 'Confirmando estabilidade…'
       : 'Tudo pronto!';
