@@ -17,13 +17,13 @@ function pointVisible(point) {
     && (point.visibility ?? 0) >= GESTURE.minimumVisibility;
 }
 
-function distance(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+function distance(first, second) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
 }
 
 function median(values) {
   if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
+  const sorted = [...values].sort((first, second) => first - second);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2
     ? sorted[middle]
@@ -95,8 +95,7 @@ class HandGestureState {
     );
 
     // O primeiro estado válido é tratado como mão disponível/aberta. Isso
-    // evita o bloqueio em que uma referência inicial alta classificava a mão
-    // como punho antes que o usuário pudesse armar o clique.
+    // evita que uma referência fixa classifique a mão como punho antes do uso.
     this.state = 'open';
     this.candidate = 'open';
     this.candidateSince = now;
@@ -120,9 +119,18 @@ class HandGestureState {
     }
 
     if (reach > this.openReference) {
-      this.openReference += (reach - this.openReference) * GESTURE.openReferenceRiseAlpha;
-    } else if (this.state !== 'fist' && reach >= this.openReference * 0.82) {
-      this.openReference += (reach - this.openReference) * GESTURE.openReferenceFallAlpha;
+      this.openReference += (
+        reach - this.openReference
+      ) * GESTURE.openReferenceRiseAlpha;
+    } else if (
+      this.state === 'open'
+      && reach >= this.openReference * GESTURE.openReferenceFallFloor
+    ) {
+      // A referência pode acompanhar mudanças lentas com a mão aberta, mas
+      // fica congelada assim que começa uma compressão perceptível.
+      this.openReference += (
+        reach - this.openReference
+      ) * GESTURE.openReferenceFallAlpha;
     }
 
     this.openReference = clamp(
@@ -215,7 +223,9 @@ export class PoseFistGestureTracker {
         continue;
       }
 
-      const normalizedReaches = tips.map((tip) => distance(wrist, tip) / shoulderWidth);
+      const normalizedReaches = tips.map(
+        (tip) => distance(wrist, tip) / shoulderWidth
+      );
       const normalizedSpread = maximumPairDistance(tips) / shoulderWidth;
       const reach = median(normalizedReaches) + normalizedSpread * 0.12;
       const visibility = clamp(
