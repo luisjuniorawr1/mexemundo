@@ -3,6 +3,7 @@ import {
   HAND_SYSTEM_CONFIG,
   MEDIAPIPE_TASKS_VERSION
 } from './hand-system-config.js';
+import { createPoseFistGestureTracker } from './pose-gesture.js';
 
 const CAMERA = HAND_SYSTEM_CONFIG.camera;
 const DETECTOR = HAND_SYSTEM_CONFIG.detector;
@@ -35,6 +36,7 @@ const POINTS = {
 const POINT_NAMES = Object.keys(POINTS);
 const WRISTS = new Set(['left', 'right']);
 const filters = new Map();
+const gestureTracker = createPoseFistGestureTracker();
 
 overlay.style.display = 'none';
 
@@ -182,8 +184,9 @@ function getFilter(name) {
   return filters.get(name);
 }
 
-function resetFilters() {
+function resetTrackingState() {
   for (const filter of filters.values()) filter.reset();
+  gestureTracker.reset();
 }
 
 function filteredPoint(name, landmark, now) {
@@ -260,6 +263,10 @@ function averageVisibility(pose) {
 function emitPose(pose, detected, now, processingMs) {
   const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
   previousFrameAt = now;
+  const gestures = detected
+    ? gestureTracker.update(pose, now)
+    : gestureTracker.missing(now);
+
   const payload = {
     detected,
     sequence: ++sequence,
@@ -277,7 +284,8 @@ function emitPose(pose, detected, now, processingMs) {
       : hiddenPoint(0.44, 0.35),
     rightShoulder: detected
       ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now)
-      : hiddenPoint(0.56, 0.35)
+      : hiddenPoint(0.56, 0.35),
+    gestures
   };
 
   if (socket.emit('pose', payload)) sentCounter += 1;
@@ -315,14 +323,14 @@ function processFrame(now, metadata) {
       const wristsVisible = (pose[POINTS.left]?.visibility ?? 0) > DETECTOR.pointVisibilityConfidence
         && (pose[POINTS.right]?.visibility ?? 0) > DETECTOR.pointVisibilityConfidence;
       trackingStatus.textContent = wristsVisible
-        ? `${transportMode === 'direct' ? 'Rastreamento rápido direto' : 'Rastreamento rápido via servidor'} • olhe para a TV!`
+        ? `${transportMode === 'direct' ? 'Rastreamento rápido direto' : 'Rastreamento rápido via servidor'} • abra e feche a mão para testar`
         : 'Mostre as duas mãos para a câmera.';
       emitPose(pose, true, current, processingMs);
     } else {
       poseQuality.textContent = '0%';
       poseQuality.className = 'quality-badge low';
       trackingStatus.textContent = 'Afaste-se até aparecer a parte superior do corpo.';
-      if (current - lastPoseAt > 250) resetFilters();
+      if (current - lastPoseAt > 250) resetTrackingState();
       if (current - missingPoseSentAt >= SCHEDULER.emptyFrameIntervalMs) {
         emitPose(null, false, current, processingMs);
         missingPoseSentAt = current;
