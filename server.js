@@ -119,7 +119,7 @@ function broadcast(room, message, except = null) {
   const serialized = JSON.stringify(message);
   for (const client of members) {
     if (client !== except && client.readyState === WebSocket.OPEN) {
-      member.send(serialized);
+      client.send(serialized);
     }
   }
 }
