@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.5.3';
+export const HAND_SYSTEM_VERSION = '1.5.4';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,13 +7,13 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 7,
+    inputVersion: 8,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
     visualResponse: 'mexeflow-v2-anti-pull',
-    identityGuard: 'continuous-two-hand-v1-anatomical-single-side',
+    identityGuard: 'anatomical-passthrough-no-swap-v1',
     menuActivation: 'stable-dwell-v1',
     startupVerification: 'strict-two-hand-separated-v1',
     palmPresence: 'wrist-or-two-pose-finger-points-v1'
@@ -46,14 +46,7 @@ const config = {
     minimumVisibility: 0.18,
     palmSupportVisibility: 0.18,
     minimumPalmSupportPoints: 2,
-    palmTrustedWristVisibility: 0.25,
-    switchMargin: 0.022,
-    emergencySwapAdvantage: 0.095,
-    switchConfirmMs: 55,
-    maximumPredictionMs: 70,
-    velocityBlend: 0.34,
-    maximumAcceptedJump: 0.22,
-    lostResetMs: 420
+    palmTrustedWristVisibility: 0.25
   },
   filter: {
     wristVelocityBlend: 0.38,
@@ -219,11 +212,10 @@ export function handSystemFingerprint() {
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
     detector.pointVisibilityConfidence,
+    identity.minimumVisibility,
     identity.palmSupportVisibility,
     identity.minimumPalmSupportPoints,
     identity.palmTrustedWristVisibility,
-    identity.switchMargin,
-    identity.maximumAcceptedJump,
     filter.wristRestDeadZone,
     visual.mode,
     visual.restEnterDistance,
