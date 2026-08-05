@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { FistActivation } from '../public/js/fist-activation.js';
+import { HandIdentityGuard } from '../public/js/hand-identity-guard.js';
 import { MexeFlowPoint } from '../public/js/mexeflow.js';
 import { PoseFistGestureTracker } from '../public/js/pose-gesture.js';
-import { FistActivation } from '../public/js/fist-activation.js';
 
 function point(x, y, visibility = 0.95) {
   return { x, y, visibility };
@@ -30,6 +31,21 @@ function makePose({ closed = false, hideThumb = false } = {}) {
   return pose;
 }
 
+function makeIdentityPose(leftX, rightX) {
+  const pose = Array.from({ length: 33 }, () => point(0.5, 0.5, 0));
+  const rawLeftX = 1 - leftX;
+  const rawRightX = 1 - rightX;
+  pose[15] = point(rawLeftX, 0.52);
+  pose[17] = point(rawLeftX, 0.49);
+  pose[19] = point(rawLeftX, 0.46);
+  pose[21] = point(rawLeftX, 0.44);
+  pose[16] = point(rawRightX, 0.52);
+  pose[18] = point(rawRightX, 0.49);
+  pose[20] = point(rawRightX, 0.46);
+  pose[22] = point(rawRightX, 0.44);
+  return pose;
+}
+
 test('MexeFlow segura tremor pequeno depois do repouso', () => {
   const flow = new MexeFlowPoint({ x: 0.5, y: 0.5 });
   let now = 100;
@@ -52,6 +68,33 @@ test('MexeFlow segura tremor pequeno depois do repouso', () => {
   assert.ok(Math.max(...xs) - Math.min(...xs) < 0.0025);
 });
 
+test('MexeFlow sai do repouso sem sensação de trava', () => {
+  const flow = new MexeFlowPoint({ x: 0.5, y: 0.5 });
+  let now = 100;
+  flow.update({ x: 0.5, y: 0.5, vx: 0, vy: 0, visible: true }, now);
+  for (let index = 0; index < 14; index += 1) {
+    now += 16.67;
+    flow.update({
+      x: 0.5 + (index % 2 ? 0.0025 : -0.0025),
+      y: 0.5,
+      vx: 0.04,
+      vy: 0,
+      visible: true
+    }, now);
+  }
+
+  const before = flow.x;
+  now += 16.67;
+  const output = flow.update({
+    x: 0.518,
+    y: 0.5,
+    vx: 0.34,
+    vy: 0,
+    visible: true
+  }, now);
+  assert.ok(output.x > before + 0.002);
+});
+
 test('MexeFlow limita atraso em movimento rápido', () => {
   const flow = new MexeFlowPoint({ x: 0.5, y: 0.5 });
   flow.update({ x: 0.5, y: 0.5, vx: 0, vy: 0, visible: true }, 100);
@@ -63,7 +106,40 @@ test('MexeFlow limita atraso em movimento rápido', () => {
     visible: true
   }, 116.67);
 
-  assert.ok(output.x >= 0.68, `posição visual ficou atrás demais: ${output.x}`);
+  assert.ok(output.x >= 0.69, `posição visual ficou atrás demais: ${output.x}`);
+});
+
+test('identidade rejeita uma troca temporária de lados', () => {
+  const guard = new HandIdentityGuard();
+  guard.stabilize(makeIdentityPose(0.30, 0.70), 100);
+  guard.stabilize(makeIdentityPose(0.34, 0.66), 116);
+
+  // O detector entrega os lados trocados durante um único quadro.
+  const output = guard.stabilize(makeIdentityPose(0.62, 0.38), 132);
+  const stableLeftX = 1 - output[15].x;
+  const stableRightX = 1 - output[16].x;
+  assert.ok(stableLeftX < stableRightX);
+  assert.ok(Math.abs(stableLeftX - 0.38) < 0.03);
+});
+
+test('identidade acompanha as mãos durante um cruzamento', () => {
+  const guard = new HandIdentityGuard();
+  const frames = [
+    [0.30, 0.70],
+    [0.40, 0.60],
+    [0.49, 0.51],
+    [0.60, 0.40],
+    [0.70, 0.30]
+  ];
+
+  frames.forEach(([leftX, rightX], index) => {
+    const output = guard.stabilize(
+      makeIdentityPose(leftX, rightX),
+      100 + index * 20
+    );
+    assert.ok(Math.abs((1 - output[15].x) - leftX) < 0.05);
+    assert.ok(Math.abs((1 - output[16].x) - rightX) < 0.05);
+  });
 });
 
 test('gesto começa armado como aberto e reconhece fechamento', () => {
@@ -80,14 +156,16 @@ test('gesto começa armado como aberto e reconhece fechamento', () => {
   assert.equal(result.right.state, 'fist');
 });
 
-test('gesto funciona com dois dedos visíveis', () => {
+test('gesto funciona com somente um ponto de dedo visível', () => {
   const tracker = new PoseFistGestureTracker();
+  const pose = makePose({ hideThumb: true });
+  pose[18].visibility = 0.02;
   let result;
   for (const now of [100, 190, 290, 380]) {
-    result = tracker.update(makePose({ hideThumb: true }), now);
+    result = tracker.update(pose, now);
   }
   assert.equal(result.right.state, 'open');
-  assert.equal(result.right.visibleTips, 2);
+  assert.equal(result.right.visibleTips, 1);
 });
 
 test('fechamento dispara um clique por ciclo aberto-fechado', () => {
@@ -103,9 +181,27 @@ test('fechamento dispara um clique por ciclo aberto-fechado', () => {
     }
   });
 
-  assert.equal(activation.update(frame('open')).activate, false);
-  assert.equal(activation.update(frame('fist')).activate, true);
-  assert.equal(activation.update(frame('fist')).activate, false);
-  assert.equal(activation.update(frame('open')).activate, false);
-  assert.equal(activation.update(frame('fist')).activate, true);
+  assert.equal(activation.update(frame('open'), 100).activate, false);
+  assert.equal(activation.update(frame('fist'), 220).activate, true);
+  assert.equal(activation.update(frame('fist'), 260).activate, false);
+  assert.equal(activation.update(frame('open'), 340).activate, false);
+  assert.equal(activation.update(frame('fist'), 460).activate, true);
+});
+
+test('compressão confirmada clica mesmo sem o estado fist', () => {
+  const activation = new FistActivation({ side: 'right' });
+  const frame = (openness) => ({
+    gestures: {
+      right: {
+        state: 'open',
+        openness,
+        confidence: 0.8,
+        visibleTips: 1
+      }
+    }
+  });
+
+  activation.update(frame(1), 100);
+  assert.equal(activation.update(frame(0.86), 160).activate, false);
+  assert.equal(activation.update(frame(0.86), 270).activate, true);
 });
