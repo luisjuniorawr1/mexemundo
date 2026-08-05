@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { HandDropoutBridge } from '../public/js/hand-dropout-bridge.js';
 import { HandIdentityGuard } from '../public/js/hand-identity-guard.js';
 
 function point(x, y = 0.52, visibility = 0.95) {
@@ -46,34 +47,48 @@ function screenX(pose, landmark) {
   return 1 - pose[landmark].x;
 }
 
-test('mão esquerda isolada não rouba o rastro da direita', () => {
+test('mão esquerda isolada conserva o lado anatômico', () => {
   const guard = new HandIdentityGuard();
-  guard.stabilize(makePose({ leftX: 0.30, rightX: 0.70 }), 100);
-  guard.stabilize(makePose({ leftX: 0.32, rightX: 0.68 }), 120);
+  guard.stabilize(makePose({ leftX: 0.40, rightX: 0.60 }), 100);
+  guard.stabilize(makePose({ leftX: 0.42, rightX: 0.58 }), 120);
 
   const output = guard.stabilize(makePose({
-    leftX: 0.66,
+    leftX: 0.52,
     leftVisible: true,
     rightVisible: false
   }), 140);
 
   assert.ok(output[15].visibility >= 0.30);
-  assert.ok(output[16].visibility >= 0.30);
-  assert.ok(screenX(output, 15) < screenX(output, 16));
-  assert.ok(Math.abs(screenX(output, 15) - 0.32) < 0.03);
+  assert.equal(output[16].visibility, 0);
+  assert.ok(Math.abs(screenX(output, 15) - 0.52) < 0.03);
 });
 
-test('salto impossível mantém a última mão em vez de fazê-la sumir', () => {
+test('salto impossível é delegado à ponte com tempos separados', () => {
   const guard = new HandIdentityGuard();
   guard.stabilize(makePose({ leftX: 0.30, rightX: 0.70 }), 100);
 
-  const output = guard.stabilize(makePose({
+  const rejected = guard.stabilize(makePose({
     leftX: 0.82,
     rightX: 0.68
   }), 116);
+  assert.equal(rejected[15].visibility, 0);
 
-  assert.ok(output[15].visibility >= 0.30);
-  assert.ok(Math.abs(screenX(output, 15) - 0.30) < 0.03);
+  const bridge = new HandDropoutBridge();
+  bridge.ingest({ x: 0.30, y: 0.52, vx: 0, vy: 0, visible: true }, 100);
+  const visual = bridge.sample(
+    { x: 0.82, y: 0.52, vx: 0, vy: 0, visible: false },
+    216,
+    220
+  );
+  const collision = bridge.sample(
+    { x: 0.82, y: 0.52, vx: 0, vy: 0, visible: false },
+    216,
+    80
+  );
+
+  assert.equal(visual.visible, true);
+  assert.equal(visual.x, 0.30);
+  assert.equal(collision.visible, false);
 });
 
 test('pulso aceito com confiança intermediária chega visível ao filtro final', () => {
@@ -95,8 +110,8 @@ test('troca do detector precisa persistir antes de alterar a associação', () =
     leftX: 0.70,
     rightX: 0.30
   }), 140);
-  assert.ok(Math.abs(screenX(transient, 15) - 0.30) < 0.03);
-  assert.ok(Math.abs(screenX(transient, 16) - 0.70) < 0.03);
+  assert.equal(transient[15].visibility, 0);
+  assert.equal(transient[16].visibility, 0);
 
   guard.stabilize(makePose({ leftX: 0.70, rightX: 0.30 }), 240);
   const persistent = guard.stabilize(makePose({
