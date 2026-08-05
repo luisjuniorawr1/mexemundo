@@ -58,7 +58,7 @@ function makePose({
 }
 
 function holdStage(binder, poseFactory, startAt) {
-  for (const offset of [0, 45, 105, 155]) {
+  for (const offset of [0, 45, 105]) {
     binder.update(poseFactory(), startAt + offset);
   }
 }
