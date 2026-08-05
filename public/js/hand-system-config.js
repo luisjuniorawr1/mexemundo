@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.3.0';
+export const HAND_SYSTEM_VERSION = '1.4.0';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -7,12 +7,13 @@ export const MEDIAPIPE_TASKS_VERSION = '0.10.22-rc.20250304';
 const config = {
   system: {
     version: HAND_SYSTEM_VERSION,
-    inputVersion: 3,
+    inputVersion: 4,
     profileVersion: HAND_PROFILE_VERSION,
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
-    visualResponse: 'mexeflow-v1'
+    visualResponse: 'mexeflow-v2',
+    identityGuard: 'continuous-two-hand-v1'
   },
   camera: {
     facingMode: 'user',
@@ -38,6 +39,16 @@ const config = {
     minimumTrackingConfidence: 0.5,
     handModel: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
   },
+  identity: {
+    minimumVisibility: 0.18,
+    switchMargin: 0.022,
+    emergencySwapAdvantage: 0.095,
+    switchConfirmMs: 55,
+    maximumPredictionMs: 70,
+    velocityBlend: 0.34,
+    maximumAcceptedJump: 0.22,
+    lostResetMs: 420
+  },
   filter: {
     wristVelocityBlend: 0.38,
     bodyVelocityBlend: 0.24,
@@ -61,47 +72,48 @@ const config = {
     idleVelocityDecay: 0.60
   },
   visual: {
-    mode: 'mexeflow-v1',
+    mode: 'mexeflow-v2',
     minimumDeltaMs: 4,
     maximumDeltaMs: 45,
-    restEnterSpeed: 0.16,
-    restExitSpeed: 0.28,
-    restEnterDistance: 0.005,
-    restExitDistance: 0.012,
-    restHoldMs: 90,
-    slowHalfLifeMs: 58,
-    fastHalfLifeMs: 10,
-    fastResponseSpeed: 0.95,
-    fastResponseDistance: 0.06,
-    snapDistance: 0.13,
-    maximumLagDistance: 0.035,
-    lookaheadMs: 7,
-    lookaheadMinimumSpeed: 0.55,
-    maximumLookaheadDistance: 0.012,
+    restEnterSpeed: 0.14,
+    restExitSpeed: 0.30,
+    restEnterDistance: 0.0045,
+    restExitDistance: 0.010,
+    restHoldMs: 110,
+    restMicroDeadZone: 0.0022,
+    restFollowHalfLifeMs: 190,
+    slowHalfLifeMs: 44,
+    fastHalfLifeMs: 8,
+    fastResponseSpeed: 0.90,
+    fastResponseDistance: 0.052,
+    snapDistance: 0.15,
+    maximumLagDistance: 0.028,
     missingGraceMs: 180
   },
   gesture: {
     sideUsedForMenus: 'right',
-    minimumVisibility: 0.18,
-    minimumVisibleTips: 2,
-    bootstrapMs: 180,
+    minimumVisibility: 0.14,
+    minimumVisibleTips: 1,
+    bootstrapMs: 120,
     initialOpenReferenceRatio: 0.10,
-    minimumOpenReferenceRatio: 0.055,
-    maximumOpenReferenceRatio: 0.24,
-    openReferenceRiseAlpha: 0.24,
-    openReferenceFallAlpha: 0.035,
-    fistEnterFraction: 0.72,
-    fistExitFraction: 0.88,
-    minimumFistRatio: 0.025,
-    minimumThresholdGap: 0.012,
-    confirmationMs: 110,
-    releaseMs: 80,
-    unknownAfterMs: 260,
-    armOpenness: 0.84,
-    activationOpenness: 0.72,
-    minimumActivationConfidence: 0.08,
-    targetLatchClosure: 0.10,
-    targetReleaseClosure: 0.04,
+    minimumOpenReferenceRatio: 0.045,
+    maximumOpenReferenceRatio: 0.25,
+    openReferenceRiseAlpha: 0.28,
+    openReferenceFallAlpha: 0.04,
+    fistEnterFraction: 0.84,
+    fistExitFraction: 0.95,
+    minimumFistRatio: 0.020,
+    minimumThresholdGap: 0.008,
+    confirmationMs: 90,
+    releaseMs: 70,
+    unknownAfterMs: 300,
+    armOpenness: 0.92,
+    activationOpenness: 0.86,
+    releaseOpenness: 0.93,
+    compressionConfirmationMs: 95,
+    minimumActivationConfidence: 0.04,
+    targetLatchClosure: 0.08,
+    targetReleaseClosure: 0.03,
     clickCooldownMs: 420
   },
   startupCheck: {
@@ -166,6 +178,7 @@ export const HAND_SYSTEM_CONFIG = deepFreeze(config);
 
 export function handSystemFingerprint() {
   const detector = HAND_SYSTEM_CONFIG.detector;
+  const identity = HAND_SYSTEM_CONFIG.identity;
   const filter = HAND_SYSTEM_CONFIG.filter;
   const visual = HAND_SYSTEM_CONFIG.visual;
   const gesture = HAND_SYSTEM_CONFIG.gesture;
@@ -173,14 +186,18 @@ export function handSystemFingerprint() {
     HAND_SYSTEM_VERSION,
     HAND_SYSTEM_CONFIG.system.productionEngine,
     HAND_SYSTEM_CONFIG.system.visualResponse,
+    HAND_SYSTEM_CONFIG.system.identityGuard,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
+    identity.switchMargin,
+    identity.maximumAcceptedJump,
     filter.wristRestDeadZone,
     visual.mode,
     visual.restEnterDistance,
     visual.maximumLagDistance,
     gesture.fistEnterFraction,
+    gesture.activationOpenness,
     gesture.minimumVisibleTips,
     HAND_SYSTEM_CONFIG.startupCheck.holdMs
   ].join(':');
