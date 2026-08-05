@@ -1,4 +1,5 @@
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
+import { HandDropoutBridge } from './hand-dropout-bridge.js';
 import { MexeFlowPoint } from './mexeflow.js';
 
 const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
@@ -81,6 +82,10 @@ function predictedPoint(point, predictionSeconds) {
  * protocolo, controla validade temporal e oferece duas saídas:
  * - visual: MexeFlow, suave em repouso e rápido em movimento;
  * - collision: rápida, sem a suavização visual.
+ *
+ * Uma ponte curta preserva a última posição válida quando apenas uma mão
+ * desaparece por poucos quadros. A ponte visual é maior que a de colisão para
+ * evitar piscadas sem criar acertos fantasmas.
  */
 export class UniversalHandInput {
   constructor() {
@@ -89,18 +94,27 @@ export class UniversalHandInput {
       left: new MexeFlowPoint(this.frame.left),
       right: new MexeFlowPoint(this.frame.right)
     };
+    this.dropoutStates = {
+      left: new HandDropoutBridge(),
+      right: new HandDropoutBridge()
+    };
   }
 
   reset() {
     this.frame = emptyFrame();
     this.visualStates.left.reset();
     this.visualStates.right.reset();
+    this.dropoutStates.left.reset();
+    this.dropoutStates.right.reset();
   }
 
   ingest(payload, receivedAt = performance.now()) {
     const next = emptyFrame();
     for (const name of POINT_NAMES) {
       next[name] = normalizePoint(payload?.[name], next[name]);
+      if (HAND_NAMES.has(name)) {
+        this.dropoutStates[name].ingest(next[name], receivedAt);
+      }
     }
     next.detected = Boolean(payload?.detected);
     next.gestures = {
@@ -142,9 +156,25 @@ export class UniversalHandInput {
         ...base[name],
         visible: Boolean(fresh && base.detected && base[name].visible)
       };
-      const speed = Math.hypot(source.vx, source.vy);
-      const predictionSeconds = HAND_NAMES.has(name)
-        && source.visible
+
+      if (!HAND_NAMES.has(name)) {
+        collision[name] = { ...source };
+        visual[name] = { ...source };
+        continue;
+      }
+
+      const collisionSource = this.dropoutStates[name].sample(
+        source,
+        Number(now),
+        HAND_SYSTEM_CONFIG.presence.collisionGraceMs
+      );
+      const visualSource = this.dropoutStates[name].sample(
+        source,
+        Number(now),
+        HAND_SYSTEM_CONFIG.presence.visualGraceMs
+      );
+      const speed = Math.hypot(collisionSource.vx, collisionSource.vy);
+      const predictionSeconds = collisionSource.visible
         && speed >= HAND_SYSTEM_CONFIG.output.velocityMinimumForPrediction
         ? Math.min(
             HAND_SYSTEM_CONFIG.output.maximumCollisionPredictionMs / 1000,
@@ -152,10 +182,8 @@ export class UniversalHandInput {
           )
         : 0;
 
-      collision[name] = predictedPoint(source, predictionSeconds);
-      visual[name] = HAND_NAMES.has(name)
-        ? this.visualStates[name].update(source, Number(now))
-        : { ...source };
+      collision[name] = predictedPoint(collisionSource, predictionSeconds);
+      visual[name] = this.visualStates[name].update(visualSource, Number(now));
     }
 
     return { visual, collision };
