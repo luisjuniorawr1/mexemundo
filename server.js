@@ -44,14 +44,15 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.10.21',
+      version: '0.10.22',
       games: ['balloons', 'goalkeeper'],
       handSystem: 'universal-two-hand-v1.7.0',
       handInput: 'hand-landmarker-palms-plus-pose-shoulders',
       gamePostProcessing: 'none',
       menu: 'stable-five-second-dwell',
       startupGate: 'two-dedicated-palms-and-shoulders-stable-1.4s',
-      handDetector: 'mediapipe-hand-landmarker-worker-adaptive-12-to-30hz',
+      handDetector: 'worker-with-automatic-main-thread-fallback-adaptive-12-to-30hz',
+      workerCompatibility: 'module-worker-importscripts-failure-falls-back-without-aborting-camera',
       bodyDetector: 'pose-landmarker-lite-shoulders-only-for-identity-independent-body',
       identity: 'strict-physical-palm-tracks-with-learned-handedness-map',
       automaticHandSwap: 'disabled-on-ambiguous-frames',
