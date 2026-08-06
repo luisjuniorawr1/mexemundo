@@ -97,7 +97,6 @@ export class MagicDrumsGame {
     }
     for (const effect of this.effects) {
       effect.life -= seconds * 1.8;
-      effect.y -= seconds * 34;
     }
     this.effects = this.effects.filter((effect) => effect.life > 0);
 
