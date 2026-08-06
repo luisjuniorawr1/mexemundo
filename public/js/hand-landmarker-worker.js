@@ -1,11 +1,11 @@
-import {
-  HAND_SYSTEM_CONFIG,
-  MEDIAPIPE_TASKS_VERSION
-} from './hand-system-config.js';
-
-const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
-const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
-const DETECTOR = HAND_SYSTEM_CONFIG.detector;
+const TASKS_VERSION = '0.10.22-rc.20250304';
+const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/+esm`;
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/wasm`;
+const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const NUMBER_OF_HANDS = 2;
+const MINIMUM_DETECTION_CONFIDENCE = 0.5;
+const MINIMUM_PRESENCE_CONFIDENCE = 0.5;
+const MINIMUM_TRACKING_CONFIDENCE = 0.5;
 
 let handLandmarker = null;
 let initialized = false;
@@ -46,14 +46,14 @@ async function createTask(delegate) {
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   return HandLandmarker.createFromOptions(vision, {
     baseOptions: {
-      modelAssetPath: DETECTOR.handModel,
+      modelAssetPath: HAND_MODEL,
       delegate
     },
     runningMode: 'VIDEO',
-    numHands: DETECTOR.numberOfHands,
-    minHandDetectionConfidence: DETECTOR.minimumDetectionConfidence,
-    minHandPresenceConfidence: DETECTOR.minimumPresenceConfidence,
-    minTrackingConfidence: DETECTOR.minimumTrackingConfidence
+    numHands: NUMBER_OF_HANDS,
+    minHandDetectionConfidence: MINIMUM_DETECTION_CONFIDENCE,
+    minHandPresenceConfidence: MINIMUM_PRESENCE_CONFIDENCE,
+    minTrackingConfidence: MINIMUM_TRACKING_CONFIDENCE
   });
 }
 
@@ -62,12 +62,12 @@ async function initialize() {
   try {
     handLandmarker = await createTask('GPU');
     initialized = true;
-    self.postMessage({ type: 'ready', delegate: 'GPU' });
+    self.postMessage({ type: 'ready', delegate: 'GPU', workerType: 'classic' });
   } catch (gpuError) {
     try {
       handLandmarker = await createTask('CPU');
       initialized = true;
-      self.postMessage({ type: 'ready', delegate: 'CPU' });
+      self.postMessage({ type: 'ready', delegate: 'CPU', workerType: 'classic' });
     } catch (cpuError) {
       self.postMessage({
         type: 'fatal',
