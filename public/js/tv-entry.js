@@ -1,4 +1,8 @@
-import { installSingleHandGameActivation } from './single-hand-game-activation.js';
+import {
+  installUniversalGameHandUI,
+  startUniversalGameHandUI
+} from './universal-game-hand-ui.js';
 
-installSingleHandGameActivation();
+installUniversalGameHandUI();
 await import('./tv.js');
+startUniversalGameHandUI();
