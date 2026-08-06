@@ -1,6 +1,9 @@
 import { HAND_SYSTEM_CONFIG } from './hand-system-config.js';
 
-const DEFAULT_CONFIG = HAND_SYSTEM_CONFIG.menu;
+const DEFAULT_CONFIG = Object.freeze({
+  ...HAND_SYSTEM_CONFIG.menu,
+  dwellMs: 4000
+});
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
