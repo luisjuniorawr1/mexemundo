@@ -102,10 +102,7 @@ function installInterfaceElements() {
     const layer = document.createElement('div');
     layer.id = 'handInterfaceLayer';
     layer.setAttribute('aria-hidden', 'true');
-    layer.innerHTML = `
-      <div id="leftInterfaceHand" class="interface-hand left"><span>✋</span></div>
-      <div id="rightInterfaceHand" class="interface-hand right"><span>✋</span></div>
-    `;
+    layer.innerHTML = '<div id="rightInterfaceHand" class="interface-hand right"><span>✋</span></div>';
     document.body.append(layer);
   }
 
@@ -139,7 +136,6 @@ function installInterfaceElements() {
         font-size: 54px;
         line-height: 1;
       }
-      .interface-hand.left span { transform: rotate(8deg) scaleX(-1); }
       .interface-hand.right span { transform: rotate(-8deg); }
       .interface-hand.right::after {
         content: '';
@@ -168,12 +164,10 @@ function installInterfaceElements() {
 class RightHandMenuController {
   constructor() {
     installInterfaceElements();
-    this.leftHand = document.querySelector('#leftInterfaceHand');
     this.rightHand = document.querySelector('#rightInterfaceHand');
     this.latest = null;
     this.lastValidAt = 0;
     this.lastFrameAt = performance.now();
-    this.leftFilter = new VisualHandFilter(0.35);
     this.rightFilter = new VisualHandFilter(0.65);
     this.x = 0.5;
     this.y = 0.5;
@@ -200,9 +194,7 @@ class RightHandMenuController {
   }
 
   hide() {
-    this.leftHand.classList.remove('active');
     this.rightHand.classList.remove('active');
-    this.leftFilter.reset();
     this.rightFilter.reset();
     this.clearTarget();
   }
@@ -236,18 +228,15 @@ class RightHandMenuController {
       return;
     }
 
-    const leftValid = validHand(this.latest?.left, this.latest);
     const rightValid = validHand(this.latest?.right, this.latest);
-    if (leftValid || rightValid) this.lastValidAt = now;
+    if (rightValid) this.lastValidAt = now;
 
-    if (!leftValid && !rightValid && now - this.lastValidAt > MISSING_GRACE_MS) {
+    if (!rightValid && now - this.lastValidAt > MISSING_GRACE_MS) {
       this.hide();
       return;
     }
 
-    const leftPoint = leftValid ? this.leftFilter.update(this.latest.left, dt) : null;
     const rightPoint = rightValid ? this.rightFilter.update(this.latest.right, dt) : null;
-    this.place(this.leftHand, leftPoint);
     this.place(this.rightHand, rightPoint);
 
     if (!rightPoint) {
