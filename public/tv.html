@@ -29,21 +29,17 @@
         <div class="hud-pill combo"><span>Combo</span><strong id="comboValue">x1</strong></div>
       </div>
 
-      <section id="pairPanel" class="modal-card pair-panel">
-        <span class="eyebrow">CONECTE O CELULAR</span>
-        <h2>Abra <strong>/celular</strong> no celular</h2>
-        <p>Use o mesmo endereço desta tela e digite o código:</p>
-        <div id="roomCode" class="room-code">----</div>
-        <p class="room-hint">O vídeo da câmera fica no celular. A TV recebe apenas os movimentos.</p>
-      </section>
+      <section id="pairPanel" class="modal-card pair-panel hidden" aria-hidden="true"></section>
 
-      <section id="calibrationPanel" class="modal-card calibration-panel hidden">
+      <section id="calibrationPanel" class="modal-card calibration-panel">
         <div class="mascot">🙌</div>
-        <span class="eyebrow">PREPARAÇÃO</span>
-        <h2>Mostre o corpo e levante as mãos</h2>
-        <p>Fique a uma distância segura da tela. Quando as duas mãos forem reconhecidas, a contagem começa.</p>
+        <span class="eyebrow">PREPARAÇÃO SEM CONTROLE</span>
+        <h2>Levante as duas mãos para começar</h2>
+        <p id="calibrationInstruction">Primeiro, abra <strong>/celular</strong> no celular e informe o código abaixo.</p>
+        <div id="roomCode" class="room-code">----</div>
+        <p class="room-hint">Assim que o celular conectar, fique de frente para a câmera e mantenha as duas mãos acima dos ombros.</p>
         <div class="calibration-meter"><span id="calibrationProgress"></span></div>
-        <strong id="calibrationMessage">Procurando você…</strong>
+        <strong id="calibrationMessage" aria-live="polite">Aguardando o celular conectar…</strong>
       </section>
 
       <section id="countdownPanel" class="countdown-panel hidden" aria-live="assertive">
@@ -57,7 +53,7 @@
         <div class="final-score"><strong id="finalScoreValue">0</strong><span>pontos</span></div>
         <p id="resultMessage">Você estourou muitos balões!</p>
         <button id="restartButton" class="button primary" type="button">Jogar novamente</button>
-        <p class="gesture-tip">Também dá para levantar as duas mãos por 2 segundos.</p>
+        <p class="gesture-tip">Levante as duas mãos por 2 segundos para jogar novamente.</p>
       </section>
 
       <div class="safe-zone-hint">Mantenha espaço livre ao redor 👣</div>
