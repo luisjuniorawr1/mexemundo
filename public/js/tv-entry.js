@@ -1,5 +1,115 @@
 import { installRightHandMenu } from './right-hand-menu.js';
 
+let menuOpened = false;
+let gameSelected = false;
+
+const nativeSetInterval = window.setInterval.bind(window);
+window.setInterval = (callback, delay, ...args) => {
+  if (Number(delay) !== 650) return nativeSetInterval(callback, delay, ...args);
+  return nativeSetInterval(() => {
+    if (!menuOpened || gameSelected) callback(...args);
+  }, delay);
+};
+
+function installInvisibleHandNavigation() {
+  const style = document.createElement('style');
+  style.id = 'mexemundoGameMenuStyle';
+  style.textContent = `
+    #rightHandMenuCursor { display: none !important; }
+    #gameMenuPanel {
+      width: min(900px, calc(100% - 42px));
+      padding: 34px;
+    }
+    #gameMenuPanel h2 { margin-bottom: 8px; }
+    .game-menu-lead { margin: 0 0 24px; }
+    .game-menu-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .game-menu-card {
+      min-height: 230px;
+      padding: 24px 18px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 12px;
+      border: 5px solid rgba(105,56,239,.13);
+      border-radius: 28px;
+      background: linear-gradient(160deg, #fff, #f3efff);
+      color: #241b46;
+      box-shadow: 0 18px 38px rgba(50,30,120,.14);
+      cursor: pointer;
+    }
+    .game-menu-card.hand-hover {
+      border-color: #ffcf4a;
+      outline: 8px solid rgba(255,207,74,.35) !important;
+      transform: scale(1.045);
+    }
+    .game-menu-card:disabled {
+      opacity: .48;
+      cursor: default;
+      box-shadow: none;
+    }
+    .game-menu-icon { font-size: 4.5rem; line-height: 1; }
+    .game-menu-card strong { font-size: 1.35rem; }
+    .game-menu-card small { color: #6b6380; font-weight: 800; }
+    .game-menu-tip {
+      margin: 22px 0 0;
+      color: #5a4f73;
+      font-size: .9rem;
+      font-weight: 850;
+    }
+    @media (max-width: 760px) {
+      #gameMenuPanel { padding: 25px 20px; }
+      .game-menu-grid { grid-template-columns: 1fr; }
+      .game-menu-card { min-height: 120px; grid-template-columns: auto 1fr; text-align: left; }
+      .game-menu-icon { font-size: 3rem; grid-row: span 2; }
+    }
+  `;
+  document.head.append(style);
+}
+
+function createGameMenu() {
+  const gameShell = document.querySelector('.game-shell');
+  if (!gameShell || document.querySelector('#gameMenuPanel')) return;
+
+  const menu = document.createElement('section');
+  menu.id = 'gameMenuPanel';
+  menu.className = 'modal-card hidden';
+  menu.setAttribute('aria-label', 'Menu de jogos');
+  menu.innerHTML = `
+    <span class="eyebrow">ESCOLHA UM JOGO</span>
+    <h2>O que vamos jogar?</h2>
+    <p class="game-menu-lead">Mova a mão direita até um jogo e mantenha-a parada para selecionar.</p>
+    <div class="game-menu-grid">
+      <button id="balloonGameCard" class="game-menu-card" type="button" data-hand-target="true">
+        <span class="game-menu-icon">🎈</span>
+        <strong>Estoura-Balões</strong>
+        <small>Use as duas mãos para estourar</small>
+      </button>
+      <button class="game-menu-card" type="button" disabled>
+        <span class="game-menu-icon">🥅</span>
+        <strong>Goleiro</strong>
+        <small>Em breve</small>
+      </button>
+      <button class="game-menu-card" type="button" disabled>
+        <span class="game-menu-icon">🥁</span>
+        <strong>Bateria</strong>
+        <small>Em breve</small>
+      </button>
+    </div>
+    <p class="game-menu-tip">Sua mão direita é o controle. Nenhum cursor precisa aparecer.</p>
+  `;
+  gameShell.append(menu);
+
+  menu.querySelector('#balloonGameCard').addEventListener('click', () => {
+    gameSelected = true;
+    menu.classList.add('hidden');
+    document.querySelector('#countdownPanel')?.classList.remove('hidden');
+  });
+}
+
 function keepCalibrationAsInitialScreen() {
   const pairPanel = document.querySelector('#pairPanel');
   const calibrationPanel = document.querySelector('#calibrationPanel');
@@ -33,6 +143,26 @@ function keepCalibrationAsInitialScreen() {
   syncInitialScreen();
 }
 
+function openMenuAfterCalibration() {
+  const countdownPanel = document.querySelector('#countdownPanel');
+  const menu = document.querySelector('#gameMenuPanel');
+  if (!countdownPanel || !menu) return;
+
+  const syncMenu = () => {
+    if (gameSelected || menuOpened || countdownPanel.classList.contains('hidden')) return;
+    menuOpened = true;
+    countdownPanel.classList.add('hidden');
+    menu.classList.remove('hidden');
+  };
+
+  const observer = new MutationObserver(syncMenu);
+  observer.observe(countdownPanel, { attributes: true, attributeFilter: ['class'] });
+  syncMenu();
+}
+
+installInvisibleHandNavigation();
+createGameMenu();
 installRightHandMenu();
 await import('./tv.js');
 keepCalibrationAsInitialScreen();
+openMenuAfterCalibration();
