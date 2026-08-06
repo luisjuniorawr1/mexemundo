@@ -6,6 +6,8 @@ const DWELL_MS = 1700;
 const RESULT_DWELL_MS = 1300;
 const MISSING_GRACE_MS = 180;
 const STABLE_DISTANCE = 0.016;
+const INTERACTION_MIN_X = 0.15;
+const INTERACTION_MAX_X = 0.85;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -77,30 +79,35 @@ function installInterfaceElements() {
       #rightHandMenuCursor {
         --progress: 0;
         position: fixed;
-        z-index: 99999;
+        z-index: 100000;
         left: 0;
         top: 0;
-        width: 58px;
-        height: 58px;
+        width: 72px;
+        height: 72px;
         display: grid;
         place-items: center;
-        border-radius: 50%;
         pointer-events: none;
         opacity: 0;
         transform: translate3d(-100px,-100px,0) translate(-50%,-50%);
-        background: conic-gradient(#ffe066 calc(var(--progress) * 1turn), rgba(255,255,255,.38) 0);
-        box-shadow: 0 8px 25px rgba(20,18,70,.28);
+        filter: drop-shadow(0 8px 12px rgba(20,18,70,.35));
         transition: opacity .12s ease;
       }
-      #rightHandMenuCursor::before {
+      #rightHandMenuCursor span {
+        position: relative;
+        z-index: 2;
+        font-size: 54px;
+        line-height: 1;
+        transform: rotate(-8deg);
+      }
+      #rightHandMenuCursor::after {
         content: '';
         position: absolute;
-        inset: 5px;
+        inset: 2px;
         border-radius: 50%;
-        background: #4f2ed6;
-        border: 3px solid #fff;
+        border: 6px solid rgba(255,224,102,.95);
+        clip-path: inset(0 calc((1 - var(--progress)) * 100%) 0 0);
+        opacity: calc(var(--progress) * .9);
       }
-      #rightHandMenuCursor span { position: relative; font-size: 29px; }
       #rightHandMenuCursor.active { opacity: 1; }
       [data-hand-target].hand-hover,
       button.hand-hover,
@@ -173,7 +180,8 @@ class RightHandMenuController {
 
     if (validRightHand(this.latest)) {
       this.lastValidAt = now;
-      this.x = clamp((this.latest.right.x - 0.06) / 0.88, 0.02, 0.98);
+      const normalizedX = clamp((this.latest.right.x - 0.12) / 0.76);
+      this.x = INTERACTION_MIN_X + normalizedX * (INTERACTION_MAX_X - INTERACTION_MIN_X);
       this.y = clamp((this.latest.right.y - 0.06) / 0.88, 0.03, 0.97);
     } else if (now - this.lastValidAt > MISSING_GRACE_MS) {
       this.hide();
