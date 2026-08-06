@@ -1,4 +1,4 @@
-export const HAND_SYSTEM_VERSION = '1.5.1';
+export const HAND_SYSTEM_VERSION = '1.5.2';
 export const HAND_PROFILE_VERSION = 2;
 export const HAND_PROFILE_SCOPE = 'universal-two-hand';
 export const HAND_PROFILE_KEY = 'mexemundo-universal-hand-profile-v2';
@@ -12,9 +12,10 @@ const config = {
     profileScope: HAND_PROFILE_SCOPE,
     referenceVersion: '0.6.0',
     productionEngine: 'pose-landmarker-lite-single-pass',
-    visualResponse: 'mexeflow-v2-anti-pull',
+    visualResponse: 'mexeflow-v2-rest-lock-anti-pull',
     identityGuard: 'continuous-two-hand-v1',
-    menuActivation: 'stable-dwell-v1'
+    menuActivation: 'stable-dwell-v1',
+    presenceStability: 'wrist-visibility-0.26-plus-240ms-visual-grace'
   },
   camera: {
     facingMode: 'user',
@@ -31,7 +32,7 @@ const config = {
     poseDetectionConfidence: 0.5,
     posePresenceConfidence: 0.5,
     poseTrackingConfidence: 0.55,
-    pointVisibilityConfidence: 0.3,
+    pointVisibilityConfidence: 0.26,
     poseModel: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
 
     // Mantidos para os laboratórios de pesquisa. Não são carregados na produção.
@@ -73,17 +74,17 @@ const config = {
     idleVelocityDecay: 0.60
   },
   visual: {
-    mode: 'mexeflow-v2-anti-pull',
+    mode: 'mexeflow-v2-rest-lock-anti-pull',
     minimumDeltaMs: 4,
     maximumDeltaMs: 45,
-    restEnterSpeed: 0.14,
+    restEnterSpeed: 0.16,
     restExitSpeed: 0.30,
-    restEnterDistance: 0.0045,
+    restEnterDistance: 0.0052,
     restExitDistance: 0.010,
-    restHoldMs: 110,
-    restMicroDeadZone: 0.0022,
-    restFollowHalfLifeMs: 190,
-    slowHalfLifeMs: 44,
+    restHoldMs: 80,
+    restMicroDeadZone: 0.0032,
+    restFollowHalfLifeMs: 240,
+    slowHalfLifeMs: 40,
     fastHalfLifeMs: 8,
     fastResponseSpeed: 0.90,
     fastResponseDistance: 0.052,
@@ -93,7 +94,7 @@ const config = {
     maximumStepSpeedGain: 1.45,
     maximumStepDistance: 0.050,
     reacquireResetMs: 360,
-    missingGraceMs: 180
+    missingGraceMs: 240
   },
   menu: {
     preferredHand: 'right',
@@ -208,14 +209,18 @@ export function handSystemFingerprint() {
     HAND_SYSTEM_CONFIG.system.visualResponse,
     HAND_SYSTEM_CONFIG.system.identityGuard,
     HAND_SYSTEM_CONFIG.system.menuActivation,
+    HAND_SYSTEM_CONFIG.system.presenceStability,
     detector.tasksVersion,
     detector.poseDetectionConfidence,
     detector.poseTrackingConfidence,
+    detector.pointVisibilityConfidence,
     identity.switchMargin,
     identity.maximumAcceptedJump,
     filter.wristRestDeadZone,
     visual.mode,
     visual.restEnterDistance,
+    visual.restMicroDeadZone,
+    visual.missingGraceMs,
     visual.maximumLagDistance,
     visual.maximumStepDistance,
     menu.dwellMs,
