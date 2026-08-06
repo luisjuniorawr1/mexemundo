@@ -33,6 +33,6 @@ function keepCalibrationAsInitialScreen() {
   syncInitialScreen();
 }
 
-keepCalibrationAsInitialScreen();
 installRightHandMenu();
 await import('./tv.js');
+keepCalibrationAsInitialScreen();
