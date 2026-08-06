@@ -1,4 +1,5 @@
 import { RealtimeClient } from './realtime.js';
+import { MagicDrumsGame } from './games/magic-drums.js';
 
 const socket = new RealtimeClient();
 const room = Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -13,12 +14,15 @@ const resultPanel = document.querySelector('#resultPanel');
 const resultTitle = document.querySelector('#resultTitle');
 const resultMessage = document.querySelector('#resultMessage');
 const finalScoreValue = document.querySelector('#finalScoreValue');
+const finalScoreLabel = finalScoreValue?.nextElementSibling;
 const restartButton = document.querySelector('#restartButton');
 const connectionBadge = document.querySelector('#connectionBadge');
 const scoreHud = document.querySelector('#scoreHud');
 const scoreValue = document.querySelector('#scoreValue');
 const timeValue = document.querySelector('#timeValue');
 const comboValue = document.querySelector('#comboValue');
+const scoreLabel = scoreValue?.previousElementSibling;
+const comboLabel = comboValue?.previousElementSibling;
 const canvas = document.querySelector('#gameCanvas');
 const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const fpsValue = document.querySelector('#fpsValue');
@@ -42,6 +46,7 @@ let phoneConnected = false;
 let transportMode = 'relay';
 let transportRtt = 0;
 let state = 'pairing';
+let selectedGame = 'balloons';
 let target = emptyPose();
 let motion = emptyPose();
 let previousHands = { left: emptyPoint(0.35, 0.55), right: emptyPoint(0.65, 0.55) };
@@ -63,6 +68,18 @@ let audioContext = null;
 let posePackets = 0;
 let poseRate = 0;
 let poseRateWindow = performance.now();
+
+const magicDrums = new MagicDrumsGame({
+  getAudioContext: () => {
+    ensureAudio();
+    return audioContext;
+  }
+});
+
+window.addEventListener('mexemundo:game-selected', (event) => {
+  selectedGame = event.detail?.game === 'drums' ? 'drums' : 'balloons';
+  configureGameLabels();
+});
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -105,6 +122,13 @@ function normalizePose(data) {
   pose.processingMs = Number(data?.processingMs || 0);
   pose.sourceIntervalMs = Number(data?.sourceIntervalMs || 0);
   return pose;
+}
+
+function configureGameLabels() {
+  const drums = selectedGame === 'drums';
+  if (scoreLabel) scoreLabel.textContent = drums ? 'Batidas' : 'Pontos';
+  if (comboLabel) comboLabel.textContent = drums ? 'Sequência' : 'Combo';
+  if (finalScoreLabel) finalScoreLabel.textContent = drums ? 'batidas' : 'pontos';
 }
 
 function rebuildBackground(width, height) {
@@ -176,6 +200,7 @@ function updateConnection(status) {
     setState('pairing');
     target = emptyPose();
     motion = emptyPose();
+    magicDrums.stop();
     return;
   }
   if (state === 'pairing') setState('calibrating');
@@ -279,12 +304,37 @@ function beginGame() {
   popTexts = [];
   gameStartedAt = performance.now();
   lastSpawnAt = 0;
+  configureGameLabels();
+
+  if (selectedGame === 'drums') magicDrums.start(gameStartedAt);
+  else magicDrums.stop();
+
   updateHud(GAME_SECONDS);
   setState('playing');
 }
 
 function endGame() {
   setState('result');
+
+  if (selectedGame === 'drums') {
+    const result = magicDrums.getResult();
+    score = result.hits;
+    combo = result.bestSequence;
+    finalScoreValue.textContent = String(result.hits);
+    if (result.hits >= 70) {
+      resultTitle.textContent = 'Show de bateria!';
+      resultMessage.textContent = `Você fez ${result.hits} batidas e chegou à sequência x${result.bestSequence}.`;
+    } else if (result.hits >= 35) {
+      resultTitle.textContent = 'Que ritmo legal!';
+      resultMessage.textContent = `Foram ${result.hits} batidas. Sua maior sequência foi x${result.bestSequence}.`;
+    } else {
+      resultTitle.textContent = 'A banda começou!';
+      resultMessage.textContent = `Você tocou ${result.hits} vezes. Na próxima rodada, experimente alternar os tambores.`;
+    }
+    playCelebration();
+    return;
+  }
+
   finalScoreValue.textContent = String(score);
   if (score >= 180) {
     resultTitle.textContent = 'Você é um mestre dos balões!';
@@ -378,7 +428,7 @@ function popBalloon(balloon) {
   playTone(balloon.special ? 820 : 620, balloon.special ? 0.14 : 0.07);
 }
 
-function updateGame(now, dt, width, height) {
+function updateBalloonGame(now, dt, width, height) {
   const remaining = GAME_SECONDS - (now - gameStartedAt) / 1000;
   if (remaining <= 0) {
     updateHud(0);
@@ -423,6 +473,21 @@ function updateGame(now, dt, width, height) {
     combo = 1;
   }
   updateHud(remaining);
+}
+
+function updateMagicDrums(now, dt, width, height) {
+  const status = magicDrums.update({
+    now,
+    dt,
+    width,
+    height,
+    hands: motion,
+    previousHands
+  });
+  score = status.hits;
+  combo = status.sequence;
+  updateHud(status.remaining);
+  if (status.ended) endGame();
 }
 
 function updateEffects(dt) {
@@ -610,12 +675,20 @@ function frame(now) {
   updateMotion(now, dt);
   drawBackground(width, height);
   if (state === 'calibrating') handleCalibration(now);
-  if (state === 'playing') updateGame(now, dt, width, height);
+  if (state === 'playing') {
+    if (selectedGame === 'drums') updateMagicDrums(now, dt, width, height);
+    else updateBalloonGame(now, dt, width, height);
+  }
   handleRestartGesture(now);
-  updateEffects(dt);
 
-  for (const balloon of balloons) drawBalloon(balloon, now);
-  drawEffects();
+  if (selectedGame === 'drums' && state === 'playing') {
+    magicDrums.draw(ctx, { now, width, height });
+  } else {
+    updateEffects(dt);
+    for (const balloon of balloons) drawBalloon(balloon, now);
+    drawEffects();
+  }
+
   if (phoneConnected && state !== 'pairing') {
     drawHand(motion.left, 'left', width, height);
     drawHand(motion.right, 'right', width, height);
@@ -642,5 +715,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+configureGameLabels();
 setState('pairing');
 requestAnimationFrame(frame);
