@@ -99,15 +99,6 @@ function installInterfaceElements() {
         line-height: 1;
         transform: rotate(-8deg);
       }
-      #rightHandMenuCursor::after {
-        content: '';
-        position: absolute;
-        inset: 2px;
-        border-radius: 50%;
-        border: 6px solid rgba(255,224,102,.95);
-        clip-path: inset(0 calc((1 - var(--progress)) * 100%) 0 0);
-        opacity: calc(var(--progress) * .9);
-      }
       #rightHandMenuCursor.active { opacity: 1; }
       [data-hand-target].hand-hover,
       button.hand-hover,
@@ -160,6 +151,8 @@ class RightHandMenuController {
   }
 
   findTarget() {
+    if (this.x < INTERACTION_MIN_X || this.x > INTERACTION_MAX_X) return null;
+
     const clientX = this.x * window.innerWidth;
     const clientY = this.y * window.innerHeight;
     const element = document.elementFromPoint(clientX, clientY);
@@ -180,8 +173,7 @@ class RightHandMenuController {
 
     if (validRightHand(this.latest)) {
       this.lastValidAt = now;
-      const normalizedX = clamp((this.latest.right.x - 0.12) / 0.76);
-      this.x = INTERACTION_MIN_X + normalizedX * (INTERACTION_MAX_X - INTERACTION_MIN_X);
+      this.x = clamp((this.latest.right.x - 0.06) / 0.88, 0.02, 0.98);
       this.y = clamp((this.latest.right.y - 0.06) / 0.88, 0.03, 0.97);
     } else if (now - this.lastValidAt > MISSING_GRACE_MS) {
       this.hide();
