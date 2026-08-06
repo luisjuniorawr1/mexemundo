@@ -1,11 +1,12 @@
 {
-  "version": "0.10.27",
+  "version": "0.10.28",
   "trackingCore": "0.10.24-frozen-perfect",
   "gameStart": "two-raised-hands-native",
   "menuDwellMs": 4000,
-  "resultDwellMs": 2200,
+  "resultDwellMs": 950,
   "interfaceHand": "right-only",
-  "gameInterface": "native-single-input",
+  "gameInterface": "exact-0.10.24-pages-native-single-input",
   "gameplayCursor": "disabled-during-play",
+  "inGameExtraControls": "removed",
   "leftHandRole": "gameplay-only"
 }
