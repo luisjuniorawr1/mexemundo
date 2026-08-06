@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0-ui-right-hand-1",
+  "trackingCore": "0.6.0-frozen",
+  "interfaceHand": "right-only",
+  "menuActivation": "dwell",
+  "menuDwellMs": 1700,
+  "resultDwellMs": 1300,
+  "gameplayCursor": "disabled-during-play"
+}
