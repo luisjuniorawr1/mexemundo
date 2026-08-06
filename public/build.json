@@ -1,12 +1,13 @@
 {
-  "version": "0.10.28",
+  "version": "0.10.29",
   "trackingCore": "0.10.24-frozen-perfect",
-  "gameStart": "two-raised-hands-native",
+  "gameStart": "two-hands-at-own-shoulder-height",
+  "startTolerance": 0.12,
+  "startHoldMs": 700,
   "menuDwellMs": 4000,
   "resultDwellMs": 950,
   "interfaceHand": "right-only",
-  "gameInterface": "exact-0.10.24-pages-native-single-input",
+  "gameInterface": "native-single-input-plus-lightweight-start-gate",
   "gameplayCursor": "disabled-during-play",
-  "inGameExtraControls": "removed",
   "leftHandRole": "gameplay-only"
 }
