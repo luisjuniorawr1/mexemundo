@@ -1,4 +1,5 @@
 import { RealtimeClient } from './realtime.js';
+import { CarRideGame } from './games/car-ride.js';
 
 const socket = new RealtimeClient();
 const room = Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -13,6 +14,7 @@ const resultPanel = document.querySelector('#resultPanel');
 const resultTitle = document.querySelector('#resultTitle');
 const resultMessage = document.querySelector('#resultMessage');
 const finalScoreValue = document.querySelector('#finalScoreValue');
+const finalScorePanel = finalScoreValue.closest('.final-score');
 const restartButton = document.querySelector('#restartButton');
 const connectionBadge = document.querySelector('#connectionBadge');
 const scoreHud = document.querySelector('#scoreHud');
@@ -33,6 +35,7 @@ const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '
 const BALLOON_SYMBOLS = ['★', '♥', '●', '✦', '♪'];
 const backgroundCanvas = document.createElement('canvas');
 const backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
+const carRideGame = new CarRideGame({ ctx });
 
 roomCode.textContent = room;
 await socket.connect();
@@ -42,6 +45,7 @@ let phoneConnected = false;
 let transportMode = 'relay';
 let transportRtt = 0;
 let state = 'pairing';
+let activeGame = 'balloons';
 let target = emptyPose();
 let motion = emptyPose();
 let previousHands = { left: emptyPoint(0.35, 0.55), right: emptyPoint(0.65, 0.55) };
@@ -66,6 +70,10 @@ let poseRateWindow = performance.now();
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
+}
+
+function selectedGame() {
+  return window.mexemundoSelectedGame === 'car-ride' ? 'car-ride' : 'balloons';
 }
 
 function emptyPoint(x = 0.5, y = 0.5) {
@@ -154,7 +162,10 @@ function setState(next) {
   calibrationPanel.classList.toggle('hidden', next !== 'calibrating');
   countdownPanel.classList.toggle('hidden', next !== 'countdown');
   resultPanel.classList.toggle('hidden', next !== 'result');
-  scoreHud.classList.toggle('hidden', next !== 'playing');
+
+  const playing = next === 'playing';
+  scoreHud.classList.toggle('hidden', !playing);
+  scoreHud.classList.toggle('car-ride-active', playing && activeGame === 'car-ride');
 
   if (next !== 'calibrating') {
     calibrationStartedAt = 0;
@@ -250,6 +261,7 @@ function handleCalibration(now) {
 
 function startCountdown() {
   if (!phoneConnected || countdownTimer) return;
+  activeGame = selectedGame();
   setState('countdown');
   let count = 3;
   countdownValue.textContent = String(count);
@@ -271,6 +283,7 @@ function startCountdown() {
 }
 
 function beginGame() {
+  activeGame = selectedGame();
   score = 0;
   combo = 1;
   consecutiveHits = 0;
@@ -279,11 +292,21 @@ function beginGame() {
   popTexts = [];
   gameStartedAt = performance.now();
   lastSpawnAt = 0;
+
+  if (activeGame === 'car-ride') {
+    finalScorePanel?.classList.add('hidden');
+    carRideGame.start(gameStartedAt);
+    setState('playing');
+    return;
+  }
+
+  finalScorePanel?.classList.remove('hidden');
   updateHud(GAME_SECONDS);
   setState('playing');
 }
 
 function endGame() {
+  finalScorePanel?.classList.remove('hidden');
   setState('result');
   finalScoreValue.textContent = String(score);
   if (score >= 180) {
@@ -296,6 +319,14 @@ function endGame() {
     resultTitle.textContent = 'Boa brincadeira!';
     resultMessage.textContent = 'Continue se mexendo para estourar ainda mais.';
   }
+  playCelebration();
+}
+
+function endCarRide() {
+  finalScorePanel?.classList.add('hidden');
+  setState('result');
+  resultTitle.textContent = 'Passeio concluído!';
+  resultMessage.textContent = 'Você conheceu a cidade, a floresta, o deserto e a praia.';
   playCelebration();
 }
 
@@ -608,15 +639,24 @@ function frame(now) {
   lastFrame = now;
 
   updateMotion(now, dt);
-  drawBackground(width, height);
-  if (state === 'calibrating') handleCalibration(now);
-  if (state === 'playing') updateGame(now, dt, width, height);
-  handleRestartGesture(now);
-  updateEffects(dt);
+  const carPlaying = state === 'playing' && activeGame === 'car-ride';
 
-  for (const balloon of balloons) drawBalloon(balloon, now);
-  drawEffects();
-  if (phoneConnected && state !== 'pairing') {
+  if (carPlaying) {
+    const completed = carRideGame.update({ dt, pose: motion });
+    carRideGame.draw({ width, height });
+    if (completed) endCarRide();
+  } else {
+    drawBackground(width, height);
+    if (state === 'calibrating') handleCalibration(now);
+    if (state === 'playing') updateGame(now, dt, width, height);
+    updateEffects(dt);
+
+    for (const balloon of balloons) drawBalloon(balloon, now);
+    drawEffects();
+  }
+
+  handleRestartGesture(now);
+  if (phoneConnected && state !== 'pairing' && !carPlaying) {
     drawHand(motion.left, 'left', width, height);
     drawHand(motion.right, 'right', width, height);
   }
