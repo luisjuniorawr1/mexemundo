@@ -15,9 +15,32 @@ function installHandNavigation() {
   const style = document.createElement('style');
   style.id = 'mexemundoGameMenuStyle';
   style.textContent = `
+    .top-actions {
+      left: 50% !important;
+      right: auto !important;
+      transform: translateX(-50%);
+      max-width: 72vw;
+      justify-content: center;
+    }
+    #gameMenuPanel,
+    #resultPanel {
+      width: min(760px, 72vw);
+      max-width: 760px;
+      margin-inline: auto;
+    }
     #gameMenuPanel {
-      width: min(900px, calc(100% - 42px));
       padding: 34px;
+    }
+    #resultPanel .button,
+    #resultPanel [data-hand-target] {
+      min-width: 180px;
+    }
+    #resultPanel .actions,
+    #resultPanel .button-row {
+      justify-content: center;
+      flex-wrap: wrap;
+      max-width: 68vw;
+      margin-inline: auto;
     }
     #gameMenuPanel h2 { margin-bottom: 8px; }
     .game-menu-lead { margin: 0 0 24px; }
@@ -60,6 +83,9 @@ function installHandNavigation() {
       font-weight: 850;
     }
     @media (max-width: 760px) {
+      .top-actions { max-width: 82vw; }
+      #gameMenuPanel,
+      #resultPanel { width: min(82vw, 620px); }
       #gameMenuPanel { padding: 25px 20px; }
       .game-menu-grid { grid-template-columns: 1fr; }
       .game-menu-card { min-height: 120px; grid-template-columns: auto 1fr; text-align: left; }
@@ -98,7 +124,7 @@ function createGameMenu() {
         <small>Em breve</small>
       </button>
     </div>
-    <p class="game-menu-tip">As próprias mãos são o controle. A direita seleciona as opções.</p>
+    <p class="game-menu-tip">A mão direita é o cursor. As opções ficam na área central para facilitar o alcance.</p>
   `;
   gameShell.append(menu);
 
