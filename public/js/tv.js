@@ -1,7 +1,18 @@
 import { RealtimeClient } from './realtime.js';
+import {
+  MotionEngine,
+  createEmptyPose,
+  installMotionDebug
+} from './motion-engine.js';
+import {
+  MotionCursor,
+  getMotionProfile,
+  getPersistentRoom,
+  roomHref
+} from './motion-ui.js';
 
 const socket = new RealtimeClient();
-const room = Math.random().toString(36).slice(2, 6).toUpperCase();
+const room = getPersistentRoom();
 const roomCode = document.querySelector('#roomCode');
 const pairPanel = document.querySelector('#pairPanel');
 const calibrationPanel = document.querySelector('#calibrationPanel');
@@ -24,15 +35,19 @@ const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const fpsValue = document.querySelector('#fpsValue');
 const networkValue = document.querySelector('#networkValue');
 const poseValue = document.querySelector('#poseValue');
+const motionCursorElement = document.querySelector('#motionCursor');
+const backButton = document.querySelector('#backButton');
 
 const GAME_SECONDS = 45;
 const POSE_TIMEOUT_MS = 240;
-const POINT_NAMES = ['left', 'right', 'leftShoulder', 'rightShoulder'];
-const WRIST_NAMES = new Set(['left', 'right']);
+const PLAY_AREA = Object.freeze({ left: 0.12, right: 0.88 });
 const BALLOON_COLORS = ['#ff5d8f', '#ff9f1c', '#2ec4b6', '#4d96ff', '#9b5de5', '#fee440'];
 const BALLOON_SYMBOLS = ['★', '♥', '●', '✦', '♪'];
 const backgroundCanvas = document.createElement('canvas');
 const backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
+const motionCursor = new MotionCursor({ element: motionCursorElement, dwellMs: 950, enabled: false });
+const motionEngine = new MotionEngine({ profile: 'menu', calibration: getMotionProfile() });
+backButton.href = roomHref('/', room);
 
 roomCode.textContent = room;
 await socket.connect();
@@ -42,9 +57,10 @@ let phoneConnected = false;
 let transportMode = 'relay';
 let transportRtt = 0;
 let state = 'pairing';
-let target = emptyPose();
-let motion = emptyPose();
-let previousHands = { left: emptyPoint(0.35, 0.55), right: emptyPoint(0.65, 0.55) };
+let target = createEmptyPose();
+let motion = createEmptyPose();
+let collision = createEmptyPose();
+let collisionFrom = createEmptyPose();
 let calibrationStartedAt = 0;
 let raisedHandsStartedAt = 0;
 let countdownTimer = null;
@@ -66,45 +82,6 @@ let poseRateWindow = performance.now();
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
-}
-
-function emptyPoint(x = 0.5, y = 0.5) {
-  return { x, y, vx: 0, vy: 0, visible: false };
-}
-
-function emptyPose() {
-  return {
-    detected: false,
-    left: emptyPoint(0.35, 0.55),
-    right: emptyPoint(0.65, 0.55),
-    leftShoulder: emptyPoint(0.44, 0.35),
-    rightShoulder: emptyPoint(0.56, 0.35),
-    receivedAt: 0,
-    sequence: 0,
-    processingMs: 0,
-    sourceIntervalMs: 0
-  };
-}
-
-function normalizePoint(point, fallback) {
-  return {
-    x: clamp(Number.isFinite(point?.x) ? point.x : fallback.x),
-    y: clamp(Number.isFinite(point?.y) ? point.y : fallback.y),
-    vx: clamp(Number.isFinite(point?.vx) ? point.vx : 0, -4, 4),
-    vy: clamp(Number.isFinite(point?.vy) ? point.vy : 0, -4, 4),
-    visible: Boolean(point?.visible)
-  };
-}
-
-function normalizePose(data) {
-  const pose = emptyPose();
-  for (const name of POINT_NAMES) pose[name] = normalizePoint(data?.[name], pose[name]);
-  pose.detected = Boolean(data?.detected);
-  pose.receivedAt = performance.now();
-  pose.sequence = Number(data?.sequence || 0);
-  pose.processingMs = Number(data?.processingMs || 0);
-  pose.sourceIntervalMs = Number(data?.sourceIntervalMs || 0);
-  return pose;
 }
 
 function rebuildBackground(width, height) {
@@ -150,11 +127,13 @@ resize();
 
 function setState(next) {
   state = next;
+  motionEngine.setProfile(next === 'playing' || next === 'countdown' ? 'game' : 'menu');
   pairPanel.classList.toggle('hidden', next !== 'pairing');
   calibrationPanel.classList.toggle('hidden', next !== 'calibrating');
   countdownPanel.classList.toggle('hidden', next !== 'countdown');
   resultPanel.classList.toggle('hidden', next !== 'result');
   scoreHud.classList.toggle('hidden', next !== 'playing');
+  motionCursor.setEnabled(phoneConnected && (next === 'calibrating' || next === 'result'));
 
   if (next !== 'calibrating') {
     calibrationStartedAt = 0;
@@ -174,8 +153,11 @@ function updateConnection(status) {
     clearInterval(countdownTimer);
     countdownTimer = null;
     setState('pairing');
-    target = emptyPose();
-    motion = emptyPose();
+    motionEngine.reset();
+    target = createEmptyPose();
+    motion = createEmptyPose();
+    collision = createEmptyPose();
+    collisionFrom = createEmptyPose();
     return;
   }
   if (state === 'pairing') setState('calibrating');
@@ -185,22 +167,25 @@ socket.on('room-status', updateConnection);
 socket.on('disconnect', () => updateConnection({ phone: false }));
 socket.on('transport', ({ mode, rtt = 0 }) => {
   transportMode = mode;
-  if (rtt) transportRtt = rtt;
+  transportRtt = Number(rtt) || 0;
+  motionEngine.setTransportMetrics({ mode, rtt });
   if (phoneConnected) {
     connectionBadge.textContent = mode === 'direct' ? 'SUPER TURBO direto' : 'Modo servidor';
     connectionBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
   }
 });
 socket.on('pose', (data) => {
-  target = normalizePose(data);
-  posePackets += 1;
+  if (!motionEngine.replayActive && motionEngine.ingest(data)) posePackets += 1;
 });
+socket.on('pose-stream-reset', () => motionEngine.reset());
+socket.on('quality', (quality) => motionEngine.setTransportMetrics(quality));
 
 setInterval(async () => {
   try {
     const startedAt = performance.now();
     await socket.request('ping-latency', { sentAt: Date.now() }, 1800);
     transportRtt = Math.round(performance.now() - startedAt);
+    motionEngine.setTransportMetrics({ mode: transportMode, rtt: transportRtt });
   } catch {
     // O diagnóstico não deve interferir na partida.
   }
@@ -229,7 +214,7 @@ function handsRaised(pose) {
 
 function handleCalibration(now) {
   const ready = bodyReady(now);
-  const raised = ready && handsRaised(target);
+  const raised = ready && handsRaised(motion);
   if (!raised) {
     calibrationStartedAt = 0;
     calibrationProgress.style.width = '0%';
@@ -309,14 +294,23 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function getPlayBounds(width, radius = 0) {
+  return {
+    left: width * PLAY_AREA.left + radius,
+    right: width * PLAY_AREA.right - radius
+  };
+}
+
 function spawnBalloon(width, height, now) {
   const radius = Math.max(30, Math.min(width, height) * randomBetween(0.038, 0.055));
   const special = Math.random() < 0.12;
+  const finalRadius = special ? radius * 1.15 : radius;
+  const bounds = getPlayBounds(width, finalRadius);
   balloons.push({
     id: `${now}-${Math.random()}`,
-    x: randomBetween(radius * 1.6, width - radius * 1.6),
-    y: height + radius * 1.5,
-    radius: special ? radius * 1.15 : radius,
+    x: randomBetween(bounds.left, bounds.right),
+    y: height + finalRadius * 1.5,
+    radius: finalRadius,
     speed: randomBetween(65, 110) + Math.min(55, score * 0.12),
     drift: randomBetween(-28, 28),
     phase: Math.random() * Math.PI * 2,
@@ -394,15 +388,20 @@ function updateGame(now, dt, width, height) {
 
   const seconds = dt / 1000;
   for (const balloon of balloons) {
+    const bounds = getPlayBounds(width, balloon.radius);
     balloon.y -= balloon.speed * seconds;
-    balloon.x += (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds;
+    balloon.x = clamp(
+      balloon.x + (balloon.drift + Math.sin(now / 500 + balloon.phase) * 18) * seconds,
+      bounds.left,
+      bounds.right
+    );
   }
 
   const poppedIds = new Set();
   for (const balloon of balloons) {
     if (
-      sweptHandHit(balloon, previousHands.left, motion.left, width, height)
-      || sweptHandHit(balloon, previousHands.right, motion.right, width, height)
+      sweptHandHit(balloon, collisionFrom.left, collision.left, width, height)
+      || sweptHandHit(balloon, collisionFrom.right, collision.right, width, height)
     ) {
       poppedIds.add(balloon.id);
       popBalloon(balloon);
@@ -440,43 +439,6 @@ function updateEffects(dt) {
     text.life -= seconds * 1.8;
   }
   popTexts = popTexts.filter((text) => text.life > 0);
-}
-
-function updateMotion(now, dt) {
-  const fresh = now - target.receivedAt < POSE_TIMEOUT_MS;
-  previousHands.left = { ...motion.left };
-  previousHands.right = { ...motion.right };
-
-  for (const name of POINT_NAMES) {
-    const source = target[name];
-    const current = motion[name];
-    const visible = Boolean(fresh && target.detected && source.visible);
-    current.visible = visible;
-    if (!visible) continue;
-
-    const isWrist = WRIST_NAMES.has(name);
-    const speed = Math.hypot(source.vx, source.vy);
-    const packetAge = Math.min((now - target.receivedAt) / 1000, 0.025);
-    const lead = isWrist ? Math.min(0.032, 0.008 + packetAge) : 0;
-    const desiredX = clamp(source.x + source.vx * lead * 0.55);
-    const desiredY = clamp(source.y + source.vy * lead * 0.55);
-    const distance = Math.hypot(desiredX - current.x, desiredY - current.y);
-
-    if (isWrist) {
-      if (!motion.detected || distance > 0.0015 || speed > 0.08) {
-        current.x = desiredX;
-        current.y = desiredY;
-      }
-    } else {
-      const seconds = Math.max(1 / 120, dt / 1000);
-      const alpha = 1 - Math.exp(-seconds / 0.04);
-      current.x += (desiredX - current.x) * alpha;
-      current.y += (desiredY - current.y) * alpha;
-    }
-    current.vx = source.vx;
-    current.vy = source.vy;
-  }
-  motion.detected = Boolean(fresh && target.detected);
 }
 
 function handleRestartGesture(now) {
@@ -604,10 +566,16 @@ function frame(now) {
   resize();
   const width = canvas.width;
   const height = canvas.height;
-  const dt = Math.min(40, now - lastFrame);
+  const frameDt = Math.max(0, now - lastFrame);
+  const dt = Math.min(40, frameDt);
   lastFrame = now;
 
-  updateMotion(now, dt);
+  const snapshot = motionEngine.sample(now);
+  target = snapshot.received;
+  motion = snapshot.visual;
+  collision = snapshot.collision;
+  collisionFrom = snapshot.collisionFrom;
+  if (state !== 'playing' && state !== 'countdown') motionCursor.updatePose(motion, now);
   drawBackground(width, height);
   if (state === 'calibrating') handleCalibration(now);
   if (state === 'playing') updateGame(now, dt, width, height);
@@ -621,7 +589,7 @@ function frame(now) {
     drawHand(motion.right, 'right', width, height);
   }
 
-  fpsAccumulator += dt;
+  fpsAccumulator += frameDt;
   fpsFrames += 1;
   if (fpsAccumulator >= 500) {
     fpsValue.textContent = String(Math.round((fpsFrames * 1000) / fpsAccumulator));
@@ -642,5 +610,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+installMotionDebug(motionEngine);
 setState('pairing');
 requestAnimationFrame(frame);

@@ -6,14 +6,16 @@
   <meta name="theme-color" content="#4f2ed6" />
   <title>MexeMundo — Estoura-Balões</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/motion.css" />
 </head>
-<body class="tv-page">
+<body class="tv-page motion-game-page">
   <header class="topbar tv-topbar">
     <div class="brand-lockup">
       <span class="brand-mark">M</span>
       <div><strong>MexeMundo</strong><small>Estoura-Balões</small></div>
     </div>
     <div class="top-actions">
+      <a id="backButton" class="icon-button motion-back-button" href="/" data-motion-target aria-label="Voltar aos jogos">←</a>
       <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
       <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
     </div>
@@ -39,8 +41,8 @@
 
       <section id="calibrationPanel" class="modal-card calibration-panel hidden">
         <div class="mascot">🙌</div>
-        <span class="eyebrow">PREPARAÇÃO</span>
-        <h2>Mostre o corpo e levante as mãos</h2>
+        <span class="eyebrow">PRONTO PARA JOGAR</span>
+        <h2>Levante as duas mãos para começar</h2>
         <p>Fique a uma distância segura da tela. Quando as duas mãos forem reconhecidas, a contagem começa.</p>
         <div class="calibration-meter"><span id="calibrationProgress"></span></div>
         <strong id="calibrationMessage">Procurando você…</strong>
@@ -56,7 +58,7 @@
         <h2 id="resultTitle">Mandou muito bem!</h2>
         <div class="final-score"><strong id="finalScoreValue">0</strong><span>pontos</span></div>
         <p id="resultMessage">Você estourou muitos balões!</p>
-        <button id="restartButton" class="button primary" type="button">Jogar novamente</button>
+        <button id="restartButton" class="button primary" data-motion-target type="button">Jogar novamente</button>
         <p class="gesture-tip">Também dá para levantar as duas mãos por 2 segundos.</p>
       </section>
 
@@ -71,6 +73,7 @@
     </section>
   </main>
 
+  <div id="motionCursor" class="motion-cursor" aria-hidden="true"><span>✋</span></div>
   <script type="module" src="/js/tv.js"></script>
 </body>
 </html>

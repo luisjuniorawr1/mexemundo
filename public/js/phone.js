@@ -1,4 +1,12 @@
 import { RealtimeClient } from './realtime.js';
+import { SessionKeeper } from './session-keeper.js';
+import {
+  MOTION_POINT_NAMES,
+  MotionSource,
+  PoseRecorder,
+  playPoseRecording,
+  validatePoseRecording
+} from './motion-engine.js';
 import {
   FilesetResolver,
   PoseLandmarker
@@ -25,8 +33,8 @@ const POINTS = {
   rightShoulder: 12
 };
 const POINT_NAMES = Object.keys(POINTS);
-const WRISTS = new Set(['left', 'right']);
-const filters = new Map();
+const motionSource = new MotionSource();
+const poseRecorder = new PoseRecorder();
 
 overlay.style.display = 'none';
 
@@ -39,8 +47,12 @@ let missingPoseSentAt = 0;
 let sentCounter = 0;
 let sentWindow = performance.now();
 let sequence = 0;
-let previousFrameAt = 0;
 let transportMode = 'relay';
+let sessionKeeper = null;
+let cameraSettings = null;
+let transportQuality = null;
+let replayActive = false;
+let activePlayback = null;
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -51,122 +63,6 @@ roomInput.addEventListener('input', () => {
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
-}
-
-function compact(value) {
-  return Math.round(value * 10000) / 10000;
-}
-
-class StableTurboPointFilter {
-  constructor({ wrist = false } = {}) {
-    this.wrist = wrist;
-    this.ready = false;
-    this.rawX = 0.5;
-    this.rawY = 0.5;
-    this.x = 0.5;
-    this.y = 0.5;
-    this.vx = 0;
-    this.vy = 0;
-    this.time = 0;
-  }
-
-  reset() {
-    this.ready = false;
-    this.vx = 0;
-    this.vy = 0;
-  }
-
-  filter(rawX, rawY, now) {
-    if (!this.ready) {
-      this.ready = true;
-      this.rawX = rawX;
-      this.rawY = rawY;
-      this.x = rawX;
-      this.y = rawY;
-      this.time = now;
-      return this.output();
-    }
-
-    const dt = clamp((now - this.time) / 1000, 1 / 120, 0.09);
-    const rawVx = (rawX - this.rawX) / dt;
-    const rawVy = (rawY - this.rawY) / dt;
-    const velocityBlend = this.wrist ? 0.38 : 0.24;
-    this.vx += (rawVx - this.vx) * velocityBlend;
-    this.vy += (rawVy - this.vy) * velocityBlend;
-
-    const dx = rawX - this.x;
-    const dy = rawY - this.y;
-    const distance = Math.hypot(dx, dy);
-    const speed = Math.hypot(this.vx, this.vy);
-
-    let deadZone;
-    let alpha;
-
-    if (this.wrist) {
-      const movement = clamp((speed - 0.07) / 0.95);
-      const displacement = clamp(distance / 0.045);
-      const responsiveness = Math.max(movement, displacement);
-
-      deadZone = speed < 0.12 ? 0.0032 : speed < 0.35 ? 0.0016 : 0.0007;
-      alpha = 0.18 + responsiveness * 0.76;
-
-      if (distance > 0.075 || speed > 1.35) alpha = 1;
-    } else {
-      deadZone = 0.0016;
-      alpha = clamp(0.20 + distance * 5, 0.20, 0.72);
-    }
-
-    if (distance > deadZone) {
-      const previousX = this.x;
-      const previousY = this.y;
-      this.x += dx * alpha;
-      this.y += dy * alpha;
-
-      const filteredVx = (this.x - previousX) / dt;
-      const filteredVy = (this.y - previousY) / dt;
-      this.vx += (filteredVx - this.vx) * 0.35;
-      this.vy += (filteredVy - this.vy) * 0.35;
-    } else {
-      this.vx *= 0.72;
-      this.vy *= 0.72;
-    }
-
-    this.rawX = rawX;
-    this.rawY = rawY;
-    this.time = now;
-    return this.output();
-  }
-
-  output() {
-    return {
-      x: compact(clamp(this.x)),
-      y: compact(clamp(this.y)),
-      vx: compact(clamp(this.vx, -4, 4)),
-      vy: compact(clamp(this.vy, -4, 4))
-    };
-  }
-}
-
-function getFilter(name) {
-  if (!filters.has(name)) filters.set(name, new StableTurboPointFilter({ wrist: WRISTS.has(name) }));
-  return filters.get(name);
-}
-
-function resetFilters() {
-  for (const filter of filters.values()) filter.reset();
-}
-
-function filteredPoint(name, landmark, now) {
-  const filter = getFilter(name);
-  const visible = (landmark?.visibility ?? 0) > 0.3;
-  if (!visible) {
-    const last = filter.output();
-    return { ...last, vx: 0, vy: 0, visible: false };
-  }
-  return {
-    ...filter.filter(clamp(1 - landmark.x), clamp(landmark.y), now),
-    visible: true
-  };
 }
 
 async function createLandmarker() {
@@ -216,6 +112,7 @@ async function startCamera() {
 
   const [track] = stream.getVideoTracks();
   if (track && 'contentHint' in track) track.contentHint = 'motion';
+  cameraSettings = track?.getSettings?.() ?? null;
   video.srcObject = stream;
   await video.play();
 }
@@ -224,21 +121,39 @@ function averageVisibility(pose) {
   return POINT_NAMES.reduce((sum, name) => sum + (pose[POINTS[name]]?.visibility ?? 0), 0) / POINT_NAMES.length;
 }
 
-function emitPose(pose, detected, now, processingMs) {
-  const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
-  previousFrameAt = now;
-  const hidden = (x, y) => ({ x, y, vx: 0, vy: 0, visible: false });
+function sourcePoints(pose) {
+  if (!pose) return null;
+  const points = {};
+  for (const name of MOTION_POINT_NAMES) {
+    const landmark = pose[POINTS[name]];
+    points[name] = {
+      x: clamp(1 - finite(landmark?.x, 0.5)),
+      y: clamp(finite(landmark?.y, 0.5)),
+      confidence: clamp(finite(landmark?.visibility))
+    };
+  }
+  return points;
+}
+
+function finite(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function emitPose(pose, detected, frameAt, processingMs) {
+  if (replayActive) return;
+  const source = motionSource.process(sourcePoints(pose), frameAt, { detected, processingMs });
   const payload = {
     detected,
     sequence: ++sequence,
-    capturedAt: Date.now(),
+    capturedAt: Date.now() - Math.round(processingMs),
     processingMs: Math.round(processingMs),
-    sourceIntervalMs: Math.round(sourceIntervalMs),
-    left: detected ? filteredPoint('left', pose[POINTS.left], now) : hidden(0.35, 0.55),
-    right: detected ? filteredPoint('right', pose[POINTS.right], now) : hidden(0.65, 0.55),
-    leftShoulder: detected ? filteredPoint('leftShoulder', pose[POINTS.leftShoulder], now) : hidden(0.44, 0.35),
-    rightShoulder: detected ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now) : hidden(0.56, 0.35)
+    sourceIntervalMs: Math.round(source.sourceIntervalMs),
+    left: source.left,
+    right: source.right,
+    leftShoulder: source.leftShoulder,
+    rightShoulder: source.rightShoulder
   };
+  poseRecorder.capture(payload);
   if (socket.emit('pose', payload)) sentCounter += 1;
 }
 
@@ -257,6 +172,10 @@ function processFrame(now, metadata) {
 
   if (mediaTime !== lastVideoTime && video.readyState >= 2) {
     lastVideoTime = mediaTime;
+    motionSource.noteVideoFrame(metadata);
+    const frameAt = Number.isFinite(metadata?.expectedDisplayTime)
+      ? metadata.expectedDisplayTime
+      : now;
     const startedAt = performance.now();
     const result = landmarker.detectForVideo(video, startedAt);
     const processing = performance.now() - startedAt;
@@ -275,14 +194,14 @@ function processFrame(now, metadata) {
       trackingStatus.textContent = wristsVisible
         ? `${transportMode === 'direct' ? 'Super Turbo estável direto' : 'Super Turbo estável via servidor'} • olhe para a TV!`
         : 'Mostre as duas mãos para a câmera.';
-      emitPose(pose, true, current, processing);
+      emitPose(pose, true, frameAt, processing);
     } else {
       poseQuality.textContent = '0%';
       poseQuality.className = 'quality-badge low';
       trackingStatus.textContent = 'Afaste-se até aparecer a parte superior do corpo.';
-      if (current - lastPoseAt > 250) resetFilters();
+      if (current - lastPoseAt > 250) motionSource.reset();
       if (current - missingPoseSentAt >= 100) {
-        emitPose(null, false, current, processing);
+        emitPose(null, false, frameAt, processing);
         missingPoseSentAt = current;
       }
     }
@@ -302,18 +221,73 @@ socket.on('transport', ({ mode }) => {
   sensorBadge.textContent = mode === 'direct' ? `TURBO ESTÁVEL • ${room}` : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
+socket.on('quality', (quality) => {
+  transportQuality = quality;
+});
 
-socket.on('room-status', ({ tv }) => {
+globalThis.mexeMundoMotion = {
+  metrics: () => ({
+    source: motionSource.getMetrics(),
+    camera: cameraSettings,
+    transport: transportQuality
+  }),
+  startRecording: () => poseRecorder.start(),
+  stopRecording: () => poseRecorder.stop(),
+  play(recording, options = {}) {
+    activePlayback?.stop();
+    validatePoseRecording(recording);
+    if (options.speed !== undefined && (!Number.isFinite(options.speed) || options.speed <= 0)) {
+      throw new Error('A velocidade do replay deve ser um número positivo.');
+    }
+    replayActive = true;
+    let playback;
+    try {
+      playback = playPoseRecording(recording, (recordedPose) => {
+        const replayPose = { ...recordedPose, sequence: ++sequence };
+        socket.emit('pose', replayPose);
+      }, {
+        ...options,
+        onFinish: () => {
+          replayActive = false;
+          activePlayback = null;
+          motionSource.reset();
+          if (typeof options.onFinish === 'function') options.onFinish();
+        }
+      });
+    } catch (error) {
+      replayActive = false;
+      throw error;
+    }
+    activePlayback = { stop: () => playback.stop() };
+    return activePlayback;
+  },
+  download(recording, filename = `mexemundo-poses-${Date.now()}.json`) {
+    const blob = new Blob([JSON.stringify(validatePoseRecording(recording), null, 2)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+};
+
+function applyTvStatus({ tv } = {}) {
   if (!running) return;
   sensorBadge.textContent = tv
     ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
-});
+}
+
+socket.on('room-status', applyTvStatus);
 
 socket.on('disconnect', () => {
+  activePlayback?.stop();
   if (!running) return;
-  sensorBadge.textContent = 'Servidor desconectado';
+  sensorBadge.textContent = `Reconectando • ${room}`;
   sensorBadge.className = 'badge waiting';
 });
 
@@ -342,6 +316,20 @@ startButton.addEventListener('click', async () => {
     sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
+
+    sessionKeeper?.stop();
+    sessionKeeper = new SessionKeeper({
+      client: socket,
+      room,
+      role: 'phone',
+      onStatus: applyTvStatus,
+      onWaiting: () => {
+        sensorBadge.textContent = `Reconectando • ${room}`;
+        sensorBadge.className = 'badge waiting';
+      }
+    });
+    sessionKeeper.start();
+
     schedulePrediction();
   } catch (error) {
     console.error(error);

@@ -1,0 +1,214 @@
+/* Seleção de jogos */
+.landing-card.game-hub {
+  width: min(960px, 100%);
+  padding: 46px;
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 30px 0 22px;
+  text-align: left;
+}
+
+.game-card {
+  position: relative;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 26px;
+  overflow: hidden;
+  border: 3px solid rgba(255,255,255,.72);
+  border-radius: 28px;
+  color: #241b46;
+  text-decoration: none;
+  box-shadow: 0 20px 45px rgba(53,34,107,.15);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.game-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 28px 60px rgba(53,34,107,.22);
+}
+
+.game-card.balloon-game {
+  background: linear-gradient(145deg, #fff4ce, #ffe4ee);
+}
+
+.game-card.goalkeeper-game {
+  background: linear-gradient(145deg, #dff9ec, #dff6ff);
+}
+
+.game-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 18px;
+  border-radius: 24px;
+  background: rgba(255,255,255,.76);
+  font-size: 2.65rem;
+  box-shadow: 0 12px 24px rgba(45,31,91,.12);
+}
+
+.game-tag {
+  color: #6938ef;
+  font-size: .7rem;
+  font-weight: 950;
+  letter-spacing: .14em;
+}
+
+.game-card strong {
+  margin-top: 7px;
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  line-height: 1.05;
+}
+
+.game-card p {
+  flex: 1;
+  margin: 12px 0 20px;
+  color: #6b6380;
+  line-height: 1.5;
+}
+
+.game-cta {
+  color: #4f2ed6;
+  font-weight: 950;
+}
+
+.sensor-entry {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.sensor-entry .helper-text {
+  margin-bottom: 0;
+}
+
+/* Goleiro Maluco */
+.goalkeeper-page {
+  background: #218c58;
+}
+
+.goalkeeper-page .brand-mark {
+  background: linear-gradient(145deg, #087f5b, #23c483);
+  box-shadow: 0 8px 16px rgba(8,127,91,.28);
+}
+
+.goalkeeper-page .brand-lockup strong,
+.goalkeeper-page .room-code,
+.goalkeeper-page .eyebrow {
+  color: #087f5b;
+}
+
+.goalkeeper-page .room-code {
+  text-shadow: 0 8px 0 #dff9ec;
+}
+
+.home-button {
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+  font-weight: 950;
+}
+
+.goalkeeper-hud {
+  width: min(680px, calc(100% - 24px));
+  justify-content: center;
+}
+
+.goalkeeper-hud .hud-pill {
+  min-width: 112px;
+}
+
+.goalkeeper-hud .hud-pill strong {
+  color: #087f5b;
+}
+
+.goalkeeper-hud .hud-pill.goals strong {
+  color: #e03131;
+}
+
+.goalkeeper-tip {
+  background: rgba(235,255,245,.9);
+  color: #12633f;
+}
+
+.goal-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.goal-stat {
+  display: grid;
+  gap: 5px;
+  padding: 18px;
+  border-radius: 22px;
+  background: #e8fff4;
+}
+
+.goal-stat strong {
+  color: #087f5b;
+  font-size: clamp(2.8rem, 8vw, 4.6rem);
+  line-height: .9;
+}
+
+.goal-stat span {
+  color: #557064;
+  font-size: .76rem;
+  font-weight: 950;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.goal-stat.danger {
+  background: #fff0f1;
+}
+
+.goal-stat.danger strong {
+  color: #e03131;
+}
+
+.goalkeeper-callout {
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  top: 24%;
+  transform: translate(-50%, -50%);
+  padding: 12px 24px;
+  border: 5px solid rgba(255,255,255,.78);
+  border-radius: 999px;
+  background: #087f5b;
+  color: #ffffff;
+  font-size: clamp(1.5rem, 5vw, 3.2rem);
+  font-weight: 1000;
+  letter-spacing: .04em;
+  text-shadow: 0 3px 0 rgba(0,0,0,.15);
+  box-shadow: 0 20px 45px rgba(0,55,35,.3);
+  pointer-events: none;
+}
+
+.goalkeeper-callout-pop {
+  animation: goalkeeperPop .6s ease-out both;
+}
+
+@keyframes goalkeeperPop {
+  0% { transform: translate(-50%, -50%) scale(.55) rotate(-5deg); opacity: 0; }
+  35% { transform: translate(-50%, -50%) scale(1.12) rotate(2deg); opacity: 1; }
+  100% { transform: translate(-50%, -62%) scale(1); opacity: 0; }
+}
+
+@media (max-width: 720px) {
+  .landing-card.game-hub { padding: 38px 20px; }
+  .game-grid { grid-template-columns: 1fr; }
+  .game-card { min-height: 230px; }
+  .goalkeeper-hud { gap: 5px; }
+  .goalkeeper-hud .hud-pill { min-width: 74px; padding: 7px 8px; }
+  .goalkeeper-hud .hud-pill span { font-size: .57rem; }
+  .goalkeeper-hud .hud-pill strong { font-size: 1.15rem; }
+}

@@ -3,23 +3,69 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#6938ef" />
-  <title>MexeMundo — Protótipo infantil</title>
+  <meta name="theme-color" content="#5c43e8" />
+  <title>MexeMundo — Central de jogos</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/motion.css" />
 </head>
-<body class="landing-page">
-  <main class="landing-card">
-    <div class="brand-orbit" aria-hidden="true">
-      <span>⭐</span><span>🎈</span><span>🌈</span>
+<body class="motion-hub-page">
+  <header class="topbar tv-topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark">M</span>
+      <div><strong>MexeMundo</strong><small>Central de jogos</small></div>
     </div>
-    <span class="eyebrow">PROTÓTIPO JOGÁVEL 0.2</span>
-    <h1>MexeMundo</h1>
-    <p class="landing-lead">A câmera do celular acompanha as mãos. A brincadeira acontece em outra tela.</p>
-    <div class="actions">
-      <a class="button primary" href="/tv">Abrir tela do jogo</a>
-      <a class="button secondary" href="/celular">Usar celular como sensor</a>
+    <div class="top-actions">
+      <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
+      <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
     </div>
-    <p class="helper-text">Primeiro jogo: <strong>Estoura-Balões</strong>.</p>
+  </header>
+
+  <main class="motion-stage">
+    <section id="pairPanel" class="modal-card pair-panel">
+      <div class="mascot">📱</div>
+      <span class="eyebrow">CONECTE UMA VEZ</span>
+      <h2>Abra <strong>/celular</strong> no telefone</h2>
+      <p>Digite este código. Depois você poderá escolher e trocar de jogo usando a mão.</p>
+      <div id="roomCode" class="room-code">----</div>
+      <p class="room-hint">O celular continuará conectado ao voltar para este menu.</p>
+    </section>
+
+    <section id="calibrationPanel" class="modal-card calibration-panel hidden">
+      <span class="eyebrow">CALIBRAÇÃO DO CURSOR</span>
+      <h2>Segure a mão direita no centro</h2>
+      <p>Fique parado por alguns segundos. Vamos medir sua distância e o tremor natural da câmera.</p>
+      <div class="motion-calibration-target" aria-hidden="true">✋</div>
+      <div class="calibration-meter"><span id="calibrationProgress"></span></div>
+      <strong id="calibrationMessage">Mostre a mão direita e os dois ombros.</strong>
+    </section>
+
+    <section id="menuPanel" class="motion-menu hidden" aria-label="Escolha um jogo">
+      <span class="eyebrow">APONTE E SEGURE PARA ESCOLHER</span>
+      <h1>Qual vai ser a brincadeira?</h1>
+      <p>A mão direita funciona como cursor. Mantenha sobre uma opção até o círculo completar.</p>
+
+      <div class="motion-game-grid">
+        <a class="motion-game-card balloon" data-motion-target data-game-path="/tv" href="/tv">
+          <span class="game-icon" aria-hidden="true">🎈</span>
+          <strong>Estoura-Balões</strong>
+          <p>Agilidade, alcance e combos usando as duas mãos.</p>
+        </a>
+
+        <a class="motion-game-card goalkeeper" data-motion-target data-game-path="/goleiro" href="/goleiro">
+          <span class="game-icon" aria-hidden="true">🧤</span>
+          <strong>Goleiro Maluco</strong>
+          <p>Reflexo, precisão e defesas rápidas dentro do gol.</p>
+        </a>
+      </div>
+
+      <div class="motion-menu-actions">
+        <button id="recalibrateButton" class="button secondary motion-action" data-motion-target type="button">Calibrar novamente</button>
+      </div>
+      <div class="motion-help">Aponte com a mão direita • segure por menos de 1 segundo</div>
+    </section>
   </main>
+
+  <div id="motionCursor" class="motion-cursor" aria-hidden="true"><span>✋</span></div>
+  <script type="module" src="/js/menu.js"></script>
 </body>
 </html>
