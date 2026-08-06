@@ -44,7 +44,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({
       ok: true,
-      version: '0.6.0',
+      version: '0.9.0',
+      games: ['balloons', 'goalkeeper'],
+      laboratory: 'pose-vs-hand-landmarker',
+      interaction: 'dual-hand-calibrated-cursor',
+      session: 'seamless-role-handoff',
       transport: 'webrtc-dual-channel-adaptive'
     }));
     return;
@@ -53,7 +57,9 @@ const server = http.createServer((req, res) => {
   const routeFiles = {
     '/': 'index.html',
     '/tv': 'tv.html',
-    '/celular': 'phone.html'
+    '/goleiro': 'goalkeeper.html',
+    '/celular': 'phone.html',
+    '/laboratorio-maos': 'hand-lab.html'
   };
 
   const routeFile = routeFiles[requestUrl.pathname];
@@ -111,6 +117,11 @@ function broadcastRoomStatus(room) {
   broadcast(room, { type: 'room-status', payload: roomStatus(room) });
 }
 
+function sendRoomStatus(client, room) {
+  if (!room || client.room !== room) return;
+  sendJson(client, { type: 'room-status', payload: roomStatus(room) });
+}
+
 function removeFromRoom(client) {
   if (!client.room) return;
 
@@ -128,13 +139,37 @@ function removeFromRoom(client) {
 
 function addToRoom(client, room, role) {
   removeFromRoom(client);
-  client.room = room;
-  client.role = role;
 
   const members = rooms.get(room) ?? new Set();
+  const replaced = [];
+
+  for (const member of [...members]) {
+    if (member !== client && member.role === role) {
+      members.delete(member);
+      member.room = '';
+      member.role = '';
+      replaced.push(member);
+    }
+  }
+
+  client.room = room;
+  client.role = role;
   members.add(client);
   rooms.set(room, members);
   broadcastRoomStatus(room);
+
+  for (const member of replaced) {
+    sendJson(member, {
+      type: 'session-replaced',
+      payload: { room, role }
+    });
+
+    setTimeout(() => {
+      if (member.readyState === WebSocket.OPEN) {
+        member.close(4001, 'Sessão substituída por uma nova tela.');
+      }
+    }, 30);
+  }
 }
 
 function handleMessage(client, rawMessage) {
@@ -166,6 +201,8 @@ function handleMessage(client, rawMessage) {
       replyTo: id,
       payload: { ok: true, room, status: roomStatus(room) }
     });
+
+    setTimeout(() => sendRoomStatus(client, room), 120);
     return;
   }
 

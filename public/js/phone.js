@@ -1,4 +1,5 @@
 import { RealtimeClient } from './realtime.js';
+import { SessionKeeper } from './session-keeper.js';
 import {
   FilesetResolver,
   PoseLandmarker
@@ -41,6 +42,7 @@ let sentWindow = performance.now();
 let sequence = 0;
 let previousFrameAt = 0;
 let transportMode = 'relay';
+let sessionKeeper = null;
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -103,14 +105,14 @@ class StableTurboPointFilter {
     let alpha;
 
     if (this.wrist) {
-      const movement = clamp((speed - 0.07) / 0.95);
+      const movement = clamp((speed - 0.09) / 0.90);
       const displacement = clamp(distance / 0.045);
       const responsiveness = Math.max(movement, displacement);
 
-      deadZone = speed < 0.12 ? 0.0032 : speed < 0.35 ? 0.0016 : 0.0007;
-      alpha = 0.18 + responsiveness * 0.76;
+      deadZone = speed < 0.14 ? 0.0040 : speed < 0.38 ? 0.0019 : 0.0007;
+      alpha = 0.16 + responsiveness * 0.78;
 
-      if (distance > 0.075 || speed > 1.35) alpha = 1;
+      if (distance > 0.07 || speed > 1.30) alpha = 1;
     } else {
       deadZone = 0.0016;
       alpha = clamp(0.20 + distance * 5, 0.20, 0.72);
@@ -127,8 +129,8 @@ class StableTurboPointFilter {
       this.vx += (filteredVx - this.vx) * 0.35;
       this.vy += (filteredVy - this.vy) * 0.35;
     } else {
-      this.vx *= 0.72;
-      this.vy *= 0.72;
+      this.vx *= 0.62;
+      this.vy *= 0.62;
     }
 
     this.rawX = rawX;
@@ -303,17 +305,19 @@ socket.on('transport', ({ mode }) => {
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
 });
 
-socket.on('room-status', ({ tv }) => {
+function applyTvStatus({ tv } = {}) {
   if (!running) return;
   sensorBadge.textContent = tv
     ? `${transportMode === 'direct' ? 'TURBO ESTÁVEL' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
-});
+}
+
+socket.on('room-status', applyTvStatus);
 
 socket.on('disconnect', () => {
   if (!running) return;
-  sensorBadge.textContent = 'Servidor desconectado';
+  sensorBadge.textContent = `Reconectando • ${room}`;
   sensorBadge.className = 'badge waiting';
 });
 
@@ -342,6 +346,20 @@ startButton.addEventListener('click', async () => {
     sensorBadge.textContent = joinResult.status?.tv ? `TV conectada • ${room}` : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
+
+    sessionKeeper?.stop();
+    sessionKeeper = new SessionKeeper({
+      client: socket,
+      room,
+      role: 'phone',
+      onStatus: applyTvStatus,
+      onWaiting: () => {
+        sensorBadge.textContent = `Reconectando • ${room}`;
+        sensorBadge.className = 'badge waiting';
+      }
+    });
+    sessionKeeper.start();
+
     schedulePrediction();
   } catch (error) {
     console.error(error);

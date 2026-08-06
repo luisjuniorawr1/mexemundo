@@ -1,17 +1,18 @@
 {
   "name": "mexemundo",
-  "version": "0.6.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/tv.js && node --check public/js/phone.js"
+    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/session-keeper.js && node --check public/js/motion-ui.js && node --check public/js/menu.js && node --check public/js/tv.js && node --check public/js/goalkeeper.js && node --check public/js/phone.js && node --check public/js/hand-lab.js && node --check public/js/hand-tracking-core.js && node --check public/js/hand-landmarker-worker.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "description": "Protótipo de minijogos infantis controlados por movimentos usando o celular como sensor corporal.",
+  "description": "Plataforma de minijogos infantis controlados por movimentos usando o celular como sensor corporal.",
   "dependencies": {
     "ws": "^8.21.1"
   }

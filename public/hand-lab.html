@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>MexeMundo — Calibração jogando</title>
+  <link rel="stylesheet" href="/hand-lab.css" />
+</head>
+<body>
+  <header class="lab-header">
+    <div>
+      <span class="eyebrow">MEXEMUNDO • NÚCLEO DE MÃOS</span>
+      <h1>Calibração jogando</h1>
+      <p>Siga os alvos com as duas mãos. O aparelho mede estabilidade, precisão e desempenho sozinho.</p>
+    </div>
+    <a class="back-link" href="/">Voltar</a>
+  </header>
+
+  <main class="lab-layout">
+    <section class="camera-card">
+      <div class="camera-toolbar">
+        <div>
+          <strong id="statusText">Câmera desligada</strong>
+          <small id="statusDetail">Nenhum vídeo é enviado ou armazenado.</small>
+        </div>
+        <span id="profileBadge" class="profile-badge">Sem perfil</span>
+      </div>
+
+      <div id="cameraStage" class="camera-stage">
+        <video id="camera" playsinline muted></video>
+        <canvas id="overlay" aria-label="Visualização do rastreamento"></canvas>
+
+        <div id="guideLayer" class="guide-layer hidden" aria-live="polite">
+          <div class="guide-copy">
+            <span id="guideStep" class="eyebrow">ETAPA 1 DE 5</span>
+            <strong id="guideTitle">Posicione as mãos</strong>
+            <small id="guideText">Coloque uma mão em cada círculo.</small>
+          </div>
+          <div id="targetLeft" class="hand-target"><span>✋</span></div>
+          <div id="targetRight" class="hand-target"><span>✋</span></div>
+          <div class="guide-progress"><span id="guideProgress"></span></div>
+        </div>
+
+        <div id="startPanel" class="start-panel">
+          <div class="start-icon">🎯</div>
+          <h2>Calibre com movimentos reais</h2>
+          <p>Apoie o celular, use boa luz e deixe braços e mãos visíveis.</p>
+          <button id="startButton" type="button">Abrir câmera</button>
+        </div>
+      </div>
+
+      <div class="legend" aria-label="Legenda">
+        <span><i class="dot hand-raw"></i> Palma detectada</span>
+        <span><i class="dot hand-stable"></i> Movimento usado</span>
+        <span><i class="dot collision"></i> Trajetória rápida</span>
+      </div>
+    </section>
+
+    <section class="panel calibration-panel">
+      <div class="panel-title">
+        <div>
+          <span class="eyebrow">GUIADO</span>
+          <h2>Teste automático</h2>
+        </div>
+        <button id="calibrateButton" type="button" disabled>Começar calibração</button>
+      </div>
+      <p id="calibrationInstruction">Abra a câmera para começar.</p>
+      <div class="progress"><span id="calibrationProgress"></span></div>
+
+      <div class="phase-list" aria-label="Etapas da calibração">
+        <span data-phase="align">1. Posicionar</span>
+        <span data-phase="steady">2. Ficar parado</span>
+        <span data-phase="horizontal">3. Linha horizontal</span>
+        <span data-phase="vertical">4. Linha vertical</span>
+        <span data-phase="corners">5. Alcançar alvos</span>
+      </div>
+    </section>
+
+    <section class="panel metrics-panel">
+      <div class="panel-title">
+        <div>
+          <span class="eyebrow">AO VIVO</span>
+          <h2>Aparelho e rastreamento</h2>
+        </div>
+        <button id="resetButton" class="secondary" type="button">Reiniciar</button>
+      </div>
+
+      <div class="metric-grid">
+        <article><span>Vídeo</span><strong id="cameraRate">0 fps</strong><small id="resolutionValue">—</small></article>
+        <article><span>Detecção das mãos</span><strong id="handRate">0/s</strong><small id="handTime">— ms</small></article>
+        <article><span>Mãos visíveis</span><strong id="visibleHands">0/2</strong><small>rastreamento atual</small></article>
+        <article><span>Perfil ativo</span><strong id="activeProfile">Padrão</strong><small id="profileDate">ainda não calibrado</small></article>
+      </div>
+    </section>
+
+    <section id="resultPanel" class="panel result-panel hidden">
+      <div class="panel-title">
+        <div>
+          <span class="eyebrow">RESULTADO SALVO</span>
+          <h2 id="resultTitle">Perfil criado</h2>
+        </div>
+        <strong id="scoreBadge" class="score-badge">—</strong>
+      </div>
+
+      <div class="result-grid">
+        <article><span>Estabilidade</span><strong id="stabilityResult">—</strong><small>tremor parado</small></article>
+        <article><span>Precisão</span><strong id="accuracyResult">—</strong><small>distância dos alvos</small></article>
+        <article><span>Continuidade</span><strong id="continuityResult">—</strong><small>mãos visíveis</small></article>
+        <article><span>Desempenho</span><strong id="performanceResult">—</strong><small>detecções por segundo</small></article>
+      </div>
+
+      <div class="saved-profile">
+        <strong>Perfil deste aparelho</strong>
+        <p id="resultMessage">A calibração foi salva localmente e será reutilizada neste navegador.</p>
+        <code id="resultCode">—</code>
+        <button id="copyButton" class="secondary" type="button">Copiar resultado</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/hand-lab.js"></script>
+</body>
+</html>
