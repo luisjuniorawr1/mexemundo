@@ -18,7 +18,7 @@
     <div class="top-actions">
       <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
       <a id="backButton" class="icon-button home-button motion-back-button" href="/" data-motion-target aria-label="Voltar aos jogos">←</a>
-      <button id="fullscreenButton" class="icon-button" data-motion-target type="button" aria-label="Abrir em tela cheia">⛶</button>
+      <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
     </div>
   </header>
 
@@ -46,7 +46,7 @@
         <div class="mascot">🙌</div>
         <span class="eyebrow">PRONTO PARA COMEÇAR</span>
         <h2>Levante as duas mãos</h2>
-        <p>Mantenha as duas mãos acima dos ombros por um instante. Assim o jogo confirma que ambas estão prontas antes da contagem.</p>
+        <p>Mantenha as duas mãos acima dos ombros por um instante.</p>
         <div class="calibration-meter"><span id="calibrationProgress"></span></div>
         <strong id="calibrationMessage">Procurando as duas mãos levantadas…</strong>
       </section>
@@ -64,18 +64,15 @@
           <div class="goal-stat danger"><strong id="finalGoalValue">0</strong><span>gols sofridos</span></div>
         </div>
         <p id="resultMessage">Você protegeu muito bem o gol!</p>
-        <div class="motion-menu-actions">
-          <button id="restartButton" class="button primary" data-motion-target data-motion-dwell-ms="2200" type="button">Jogar novamente</button>
-          <a class="button secondary" data-motion-target data-motion-dwell-ms="2200" href="/">Escolher outro jogo</a>
-        </div>
-        <p class="gesture-tip">Aponte para uma opção e mantenha a mão parada, ou levante as duas mãos para reiniciar.</p>
+        <button id="restartButton" class="button primary" data-motion-target type="button">Jogar novamente</button>
+        <p class="gesture-tip">Também dá para levantar as duas mãos por alguns instantes.</p>
       </section>
 
       <div id="saveCallout" class="goalkeeper-callout hidden" aria-live="polite">DEFESA!</div>
       <div class="safe-zone-hint goalkeeper-tip">Defenda com as duas mãos 🧤</div>
 
       <details class="diagnostics">
-        <summary data-motion-target>Diagnóstico</summary>
+        <summary>Diagnóstico</summary>
         <div>FPS <strong id="fpsValue">0</strong></div>
         <div>Rede <strong id="networkValue">-- ms</strong></div>
         <div>Mãos <strong id="poseValue">não detectadas</strong></div>
