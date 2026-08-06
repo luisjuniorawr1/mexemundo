@@ -11,7 +11,7 @@
   <header class="topbar phone-topbar">
     <div class="brand-lockup">
       <span class="brand-mark">M</span>
-      <div><strong>MexeMundo</strong><small>Rastreamento de duas mãos</small></div>
+      <div><strong>MexeMundo</strong><small>Detector dedicado de mãos</small></div>
     </div>
     <div id="sensorBadge" class="badge waiting">Desconectado</div>
   </header>
@@ -24,25 +24,18 @@
       <label for="roomInput">Código mostrado na TV</label>
       <input id="roomInput" maxlength="6" inputmode="text" autocomplete="off" placeholder="AB12" aria-label="Código da sala" />
       <button id="startButton" class="button primary" type="button">Conectar e abrir câmera</button>
-      <p class="privacy-note">🔒 O vídeo não é enviado para a TV nem guardado. O celular transmite somente pontos das mãos e dos ombros.</p>
+      <p class="privacy-note">🔒 O vídeo não é enviado para a TV nem guardado. O celular transmite somente as posições das mãos e dos ombros.</p>
       <p class="helper-text">A câmera exige HTTPS quando o celular acessa o projeto pela rede.</p>
     </section>
 
     <section id="cameraPanel" class="camera-panel hidden">
       <div class="camera-header phone-card">
         <div>
-          <span class="eyebrow">SENSORES SEPARADOS</span>
-          <strong id="trackingStatus">Preparando câmera…</strong>
+          <span class="eyebrow">PALMAS + CORPO</span>
+          <strong id="trackingStatus">Preparando detectores…</strong>
         </div>
-        <span id="poseQuality" class="quality-badge">0%</span>
+        <span id="poseQuality" class="quality-badge">0/2</span>
       </div>
-
-      <section id="sensorCalibrationPanel" class="phone-card sensor-calibration-panel" aria-live="polite">
-        <span id="sensorCalibrationStep" class="eyebrow">CONFIGURAÇÃO 1 DE 2</span>
-        <strong id="sensorCalibrationInstruction">Mostre somente a mão direita.</strong>
-        <div class="calibration-meter"><span id="sensorCalibrationProgress"></span></div>
-        <p id="sensorCalibrationHint" class="helper-text">Levante somente a mão direita e mantenha a esquerda abaixada.</p>
-      </section>
 
       <div class="video-wrap">
         <video id="camera" autoplay playsinline muted></video>
@@ -51,12 +44,12 @@
       </div>
 
       <div class="sensor-stats phone-card">
-        <div><span>IA das mãos</span><strong id="processingValue">-- ms</strong></div>
+        <div><span>IA corpo • mãos</span><strong id="processingValue">-- ms</strong></div>
         <div><span>Envio</span><strong id="sendValue">0/s</strong></div>
         <div><span>Sala</span><strong id="roomValue">----</strong></div>
       </div>
 
-      <p class="phone-safety">Apoie o celular em um local firme. Primeiro configure a mão direita e depois a esquerda. Durante o jogo, cada mão permanecerá presa ao sensor que foi configurado para ela.</p>
+      <p class="phone-safety">Apoie o celular em um local firme e deixe mãos, braços e ombros dentro da imagem. O detector de palmas funciona separado do detector corporal.</p>
     </section>
   </main>
 
