@@ -1,6 +1,7 @@
 {
-  "version": "0.6.0-ui-right-hand-1",
+  "version": "0.6.0-ui-right-hand-2",
   "trackingCore": "0.6.0-frozen",
+  "rootEntry": "automatic-tv-screen",
   "interfaceHand": "right-only",
   "menuActivation": "dwell",
   "menuDwellMs": 1700,
