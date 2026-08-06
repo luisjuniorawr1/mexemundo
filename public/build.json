@@ -1,0 +1,6 @@
+{
+  "version": "0.10.23",
+  "handDetectorWorker": "classic-worker",
+  "mainThreadFallback": "emergency-only",
+  "trackingCore": "hand-landmarker-palms-plus-pose-shoulders"
+}
