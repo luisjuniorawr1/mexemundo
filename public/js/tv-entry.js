@@ -15,22 +15,44 @@ function installHandNavigation() {
   const style = document.createElement('style');
   style.id = 'mexemundoGameMenuStyle';
   style.textContent = `
-    .top-actions {
-      left: 50% !important;
-      right: auto !important;
-      transform: translateX(-50%);
-      max-width: 72vw;
-      justify-content: center;
+    .tv-page,
+    .tv-layout {
+      width: 100%;
+      height: 100vh;
+      min-height: 100vh;
     }
+    .tv-layout { position: relative; }
+    #calibrationPanel,
     #gameMenuPanel,
     #resultPanel {
       width: min(760px, 72vw);
       max-width: 760px;
       margin-inline: auto;
     }
-    #gameMenuPanel {
-      padding: 34px;
+    .preparation-actions {
+      width: min(520px, 100%);
+      margin: 16px auto 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
     }
+    .preparation-actions .badge {
+      min-height: 48px;
+      padding: 13px 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .9rem;
+    }
+    .fullscreen-action {
+      min-width: 190px;
+      min-height: 56px;
+      font-size: 1rem;
+      cursor: default;
+    }
+    #gameMenuPanel { padding: 34px; }
     #resultPanel .button,
     #resultPanel [data-hand-target] {
       min-width: 180px;
@@ -83,10 +105,13 @@ function installHandNavigation() {
       font-weight: 850;
     }
     @media (max-width: 760px) {
-      .top-actions { max-width: 82vw; }
+      #calibrationPanel,
       #gameMenuPanel,
       #resultPanel { width: min(82vw, 620px); }
       #gameMenuPanel { padding: 25px 20px; }
+      .preparation-actions { gap: 10px; }
+      .preparation-actions .badge,
+      .fullscreen-action { width: min(100%, 300px); }
       .game-menu-grid { grid-template-columns: 1fr; }
       .game-menu-card { min-height: 120px; grid-template-columns: auto 1fr; text-align: left; }
       .game-menu-icon { font-size: 3rem; grid-row: span 2; }
