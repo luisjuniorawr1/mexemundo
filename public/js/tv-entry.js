@@ -11,11 +11,19 @@ window.setInterval = (callback, delay, ...args) => {
   }, delay);
 };
 
-function installInvisibleHandNavigation() {
+function installHandNavigation() {
   const style = document.createElement('style');
   style.id = 'mexemundoGameMenuStyle';
   style.textContent = `
-    #rightHandMenuCursor { display: none !important; }
+    #rightHandMenuCursor {
+      display: grid !important;
+      z-index: 100000 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+    }
+    #rightHandMenuCursor::before,
+    #rightHandMenuCursor::after { display: none !important; }
     #gameMenuPanel {
       width: min(900px, calc(100% - 42px));
       padding: 34px;
@@ -99,7 +107,7 @@ function createGameMenu() {
         <small>Em breve</small>
       </button>
     </div>
-    <p class="game-menu-tip">Sua mão direita é o controle. Nenhum cursor precisa aparecer.</p>
+    <p class="game-menu-tip">A mão direita aparece sobre o menu. As laterais da tela não ativam opções.</p>
   `;
   gameShell.append(menu);
 
@@ -160,7 +168,7 @@ function openMenuAfterCalibration() {
   syncMenu();
 }
 
-installInvisibleHandNavigation();
+installHandNavigation();
 createGameMenu();
 installRightHandMenu();
 await import('./tv.js');
