@@ -1,8 +1,8 @@
 import {
-  installUniversalGameHandUI,
-  startUniversalGameHandUI
-} from './universal-game-hand-ui.js';
+  installRightHandGameUI,
+  startRightHandGameUI
+} from './right-hand-game-ui.js';
 
-installUniversalGameHandUI();
+installRightHandGameUI();
 await import('./tv.js');
-startUniversalGameHandUI();
+startRightHandGameUI();
