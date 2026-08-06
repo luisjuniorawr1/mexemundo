@@ -4,13 +4,12 @@ import {
   MEDIAPIPE_TASKS_VERSION
 } from './hand-system-config.js';
 import { createPoseFistGestureTracker } from './pose-gesture.js';
-import { createSequentialHandBinder } from './sequential-hand-binder.js';
+import { createProductionHandAnchor } from './production-hand-anchor.js';
 
 const CAMERA = HAND_SYSTEM_CONFIG.camera;
 const DETECTOR = HAND_SYSTEM_CONFIG.detector;
 const FILTER = HAND_SYSTEM_CONFIG.filter;
 const SCHEDULER = HAND_SYSTEM_CONFIG.scheduler;
-const SENSOR_CALIBRATION = HAND_SYSTEM_CONFIG.sensorCalibration;
 const TASKS_MODULE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/+esm`;
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_TASKS_VERSION}/wasm`;
 let visionModulePromise = null;
@@ -28,22 +27,16 @@ const processingValue = document.querySelector('#processingValue');
 const sendValue = document.querySelector('#sendValue');
 const roomValue = document.querySelector('#roomValue');
 const poseQuality = document.querySelector('#poseQuality');
-const calibrationStep = document.querySelector('#sensorCalibrationStep');
-const calibrationInstruction = document.querySelector('#sensorCalibrationInstruction');
-const calibrationHint = document.querySelector('#sensorCalibrationHint');
-const calibrationProgress = document.querySelector('#sensorCalibrationProgress');
-const calibrationPanel = document.querySelector('#sensorCalibrationPanel');
 
 const POINTS = {
-  left: 15,
-  right: 16,
   leftShoulder: 11,
   rightShoulder: 12
 };
-const POINT_NAMES = Object.keys(POINTS);
+const BODY_QUALITY_POINTS = [11, 12, 13, 14];
 const WRISTS = new Set(['left', 'right']);
 const filters = new Map();
-const handBinder = createSequentialHandBinder();
+const anchorOutputs = new Map();
+const handAnchor = createProductionHandAnchor();
 const gestureTracker = createPoseFistGestureTracker();
 
 overlay.style.display = 'none';
@@ -52,7 +45,7 @@ let landmarker = null;
 let running = false;
 let room = '';
 let lastVideoTime = -1;
-let lastPoseAt = 0;
+let lastBodyPoseAt = 0;
 let missingPoseSentAt = 0;
 let sentCounter = 0;
 let sentWindow = performance.now();
@@ -60,8 +53,6 @@ let sequence = 0;
 let previousFrameAt = 0;
 let transportMode = 'relay';
 let activeStream = null;
-let lastCalibrationBroadcastAt = 0;
-let lastCalibrationStatusKey = '';
 
 const queryRoom = new URLSearchParams(location.search).get('sala');
 if (queryRoom) roomInput.value = queryRoom.toUpperCase().slice(0, 6);
@@ -196,18 +187,11 @@ function getFilter(name) {
 
 function resetOutputFilters() {
   for (const filter of filters.values()) filter.reset();
+  anchorOutputs.clear();
   gestureTracker.reset();
 }
 
-function restartSensorCalibration() {
-  handBinder.reset();
-  resetOutputFilters();
-  lastCalibrationStatusKey = '';
-  renderCalibration(handBinder.status());
-  broadcastCalibration(handBinder.status(), performance.now(), true);
-}
-
-function filteredPoint(name, landmark, now) {
+function filteredBodyPoint(name, landmark, now) {
   const filter = getFilter(name);
   const visible = (landmark?.visibility ?? 0) > DETECTOR.pointVisibilityConfidence;
   if (!visible) {
@@ -221,8 +205,38 @@ function filteredPoint(name, landmark, now) {
   };
 }
 
-async function createLandmarker() {
-  trackingStatus.textContent = 'Ativando rastreamento rápido…';
+function filteredAnchorPoint(name, hand, now) {
+  const filter = getFilter(name);
+  const previous = anchorOutputs.get(name) ?? {
+    lastSeenAt: 0,
+    output: filter.output()
+  };
+
+  if (!hand?.visible || !hand.raw) {
+    anchorOutputs.set(name, previous);
+    return { ...previous.output, vx: 0, vy: 0, visible: false };
+  }
+
+  if (hand.lastSeenAt > previous.lastSeenAt) {
+    previous.output = filter.filter(
+      clamp(hand.raw.x),
+      clamp(hand.raw.y),
+      hand.lastSeenAt || now
+    );
+    previous.lastSeenAt = hand.lastSeenAt;
+    anchorOutputs.set(name, previous);
+  }
+
+  return {
+    ...previous.output,
+    vx: compact(clamp(hand.velocity?.x ?? previous.output.vx, -4, 4)),
+    vy: compact(clamp(hand.velocity?.y ?? previous.output.vy, -4, 4)),
+    visible: true
+  };
+}
+
+async function createPoseLandmarker() {
+  trackingStatus.textContent = 'Ativando corpo e mãos…';
   visionModulePromise ??= import(TASKS_MODULE);
   const { FilesetResolver, PoseLandmarker } = await visionModulePromise;
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
@@ -242,7 +256,7 @@ async function createLandmarker() {
   try {
     return await PoseLandmarker.createFromOptions(vision, options);
   } catch (error) {
-    console.warn('GPU indisponível; tentando CPU.', error);
+    console.warn('GPU do corpo indisponível; tentando CPU.', error);
     options.baseOptions.delegate = 'CPU';
     return PoseLandmarker.createFromOptions(vision, options);
   }
@@ -271,118 +285,70 @@ async function startCamera() {
   await video.play();
 }
 
-function averageVisibility(pose) {
-  return POINT_NAMES.reduce(
-    (sum, name) => sum + (pose[POINTS[name]]?.visibility ?? 0),
+function averageBodyVisibility(pose) {
+  if (!pose) return 0;
+  return BODY_QUALITY_POINTS.reduce(
+    (sum, index) => sum + Number(pose[index]?.visibility ?? 0),
     0
-  ) / POINT_NAMES.length;
+  ) / BODY_QUALITY_POINTS.length;
 }
 
-function calibrationCopy(status) {
-  if (status.ready) {
-    return {
-      step: 'SENSORES CONFIGURADOS',
-      instruction: 'Direita e esquerda estão presas aos sensores configurados.',
-      hint: 'Agora você pode jogar normalmente com as duas mãos.'
-    };
-  }
+function updateTrackingUi(rawPose, hands, poseMs) {
+  const visibleCount = Number(Boolean(hands.left.visible))
+    + Number(Boolean(hands.right.visible));
+  const anchorStatus = handAnchor.status();
+  const bodyQuality = averageBodyVisibility(rawPose);
 
-  const sideName = status.stage === 'right' ? 'direita' : 'esquerda';
-  const stepNumber = status.stage === 'right' ? '1 DE 2' : '2 DE 2';
-  let hint = `Levante somente a mão ${sideName} e mantenha a outra abaixada.`;
+  poseQuality.textContent = `${visibleCount}/2`;
+  poseQuality.className = `quality-badge ${visibleCount === 2 ? 'good' : visibleCount === 1 ? 'medium' : 'low'}`;
+  processingValue.textContent = anchorStatus.inferenceMs
+    ? `${Math.round(poseMs)} ms • mãos ${Math.round(anchorStatus.inferenceMs)} ms`
+    : `${Math.round(poseMs)} ms`;
 
-  if (status.reason === 'lower-other-hand') {
-    hint = 'Abaixe completamente a outra mão para não misturar os sensores.';
-  } else if (status.reason === 'hold-still') {
-    hint = `Mão ${sideName} encontrada. Mantenha-a parada até completar.`;
-  }
-
-  return {
-    step: `CONFIGURAÇÃO ${stepNumber}`,
-    instruction: `Mostre somente a mão ${sideName}.`,
-    hint
-  };
-}
-
-function renderCalibration(status) {
-  const copy = calibrationCopy(status);
-  calibrationPanel?.classList.toggle('ready', status.ready);
-  calibrationStep.textContent = copy.step;
-  calibrationInstruction.textContent = copy.instruction;
-  calibrationHint.textContent = copy.hint;
-  calibrationProgress.style.width = `${Math.round(clamp(status.progress) * 100)}%`;
-
-  if (status.ready) {
-    trackingStatus.textContent = `${transportMode === 'direct' ? 'Rastreamento rápido direto' : 'Rastreamento rápido via servidor'} • sensores separados ativos`;
+  if (!anchorStatus.ready) {
+    trackingStatus.textContent = 'Carregando detector dedicado das mãos…';
+  } else if (visibleCount === 2 && bodyQuality >= 0.35) {
+    trackingStatus.textContent = `${transportMode === 'direct' ? 'Direto' : 'Servidor'} • duas palmas rastreadas • ${anchorStatus.targetRate}/s`;
+  } else if (visibleCount === 1) {
+    trackingStatus.textContent = 'Uma mão encontrada. Mostre também a outra.';
+  } else if (visibleCount === 2) {
+    trackingStatus.textContent = 'Mãos encontradas. Afaste-se até os ombros aparecerem.';
   } else {
-    trackingStatus.textContent = copy.instruction;
+    trackingStatus.textContent = 'Mostre as duas palmas para a câmera.';
   }
 }
 
-function calibrationStatusKey(status) {
-  return [
-    status.stage,
-    status.reason,
-    Math.round(clamp(status.progress) * 20),
-    status.ready ? 1 : 0
-  ].join(':');
-}
+function emitFrame(rawPose, hands, now, processingMs) {
+  const left = filteredAnchorPoint('left', hands.left, now);
+  const right = filteredAnchorPoint('right', hands.right, now);
+  const detected = Boolean(rawPose || left.visible || right.visible);
 
-function broadcastCalibration(status, now, force = false) {
-  const key = calibrationStatusKey(status);
-  const changed = key !== lastCalibrationStatusKey;
-  if (
-    !force
-    && !changed
-    && now - lastCalibrationBroadcastAt < SENSOR_CALIBRATION.statusBroadcastIntervalMs
-  ) return;
+  if (!detected && now - missingPoseSentAt < SCHEDULER.emptyFrameIntervalMs) {
+    return;
+  }
 
-  lastCalibrationBroadcastAt = now;
-  lastCalibrationStatusKey = key;
-  socket.emit('game-command', {
-    command: 'sensor-calibration',
-    stage: status.stage,
-    progress: clamp(status.progress),
-    ready: Boolean(status.ready),
-    reason: status.reason
-  });
-}
-
-function emitPose(pose, detected, now, processingMs) {
   const sourceIntervalMs = previousFrameAt ? now - previousFrameAt : 0;
   previousFrameAt = now;
-  const gestures = detected
-    ? gestureTracker.update(pose, now)
-    : gestureTracker.missing(now);
-
+  const gestures = gestureTracker.missing(now);
   const payload = {
     detected,
     sequence: ++sequence,
     capturedAt: Date.now(),
     processingMs: Math.round(processingMs),
     sourceIntervalMs: Math.round(sourceIntervalMs),
-    left: detected
-      ? filteredPoint('left', pose[POINTS.left], now)
-      : hiddenPoint(0.35, 0.55),
-    right: detected
-      ? filteredPoint('right', pose[POINTS.right], now)
-      : hiddenPoint(0.65, 0.55),
-    leftShoulder: detected
-      ? filteredPoint('leftShoulder', pose[POINTS.leftShoulder], now)
+    left: detected ? left : hiddenPoint(0.35, 0.55),
+    right: detected ? right : hiddenPoint(0.65, 0.55),
+    leftShoulder: rawPose
+      ? filteredBodyPoint('leftShoulder', rawPose[POINTS.leftShoulder], now)
       : hiddenPoint(0.44, 0.35),
-    rightShoulder: detected
-      ? filteredPoint('rightShoulder', pose[POINTS.rightShoulder], now)
+    rightShoulder: rawPose
+      ? filteredBodyPoint('rightShoulder', rawPose[POINTS.rightShoulder], now)
       : hiddenPoint(0.56, 0.35),
     gestures
   };
 
+  if (!detected) missingPoseSentAt = now;
   if (socket.emit('pose', payload)) sentCounter += 1;
-}
-
-function emitHiddenPose(now, processingMs) {
-  if (now - missingPoseSentAt < SCHEDULER.emptyFrameIntervalMs) return;
-  emitPose(null, false, now, processingMs);
-  missingPoseSentAt = now;
 }
 
 function schedulePrediction() {
@@ -400,40 +366,25 @@ function processFrame(now, metadata) {
 
   if (mediaTime !== lastVideoTime && video.readyState >= 2) {
     lastVideoTime = mediaTime;
+    void handAnchor.maybeSubmit(video, now);
+
     const startedAt = performance.now();
-    const result = landmarker.detectForVideo(video, startedAt);
+    let rawPose = null;
+    try {
+      rawPose = landmarker.detectForVideo(video, startedAt).landmarks?.[0] ?? null;
+    } catch (error) {
+      console.warn('Quadro corporal descartado.', error);
+    }
     const processingMs = performance.now() - startedAt;
-    const rawPose = result.landmarks?.[0];
     const current = performance.now();
+    const hands = handAnchor.sample(current);
 
-    processingValue.textContent = `${Math.round(processingMs)} ms`;
+    if (rawPose) lastBodyPoseAt = current;
+    updateTrackingUi(rawPose, hands, processingMs);
+    emitFrame(rawPose, hands, current, processingMs);
 
-    if (rawPose) {
-      lastPoseAt = current;
-      const quality = averageVisibility(rawPose);
-      poseQuality.textContent = `${Math.round(quality * 100)}%`;
-      poseQuality.className = `quality-badge ${quality > 0.7 ? 'good' : quality > 0.48 ? 'medium' : 'low'}`;
-
-      const bindingResult = handBinder.update(rawPose, current);
-      renderCalibration(bindingResult.status);
-      broadcastCalibration(bindingResult.status, current);
-
-      if (bindingResult.pose) {
-        emitPose(bindingResult.pose, true, current, processingMs);
-      } else {
-        emitHiddenPose(current, processingMs);
-      }
-    } else {
-      poseQuality.textContent = '0%';
-      poseQuality.className = 'quality-badge low';
-      const status = handBinder.status();
-      renderCalibration(status);
-      broadcastCalibration(status, current);
-      trackingStatus.textContent = status.ready
-        ? 'Afaste-se até aparecer a parte superior do corpo.'
-        : calibrationCopy(status).instruction;
-      if (current - lastPoseAt > 250) resetOutputFilters();
-      emitHiddenPose(current, processingMs);
+    if (!rawPose && current - lastBodyPoseAt > 500 && !hands.left.visible && !hands.right.visible) {
+      resetOutputFilters();
     }
 
     if (current - sentWindow >= 1000) {
@@ -453,8 +404,6 @@ socket.on('transport', ({ mode }) => {
     ? `RÁPIDO • ${room}`
     : `Servidor • ${room}`;
   sensorBadge.className = `badge ${mode === 'direct' ? 'online' : 'waiting'}`;
-  renderCalibration(handBinder.status());
-  broadcastCalibration(handBinder.status(), performance.now(), true);
 });
 
 socket.on('room-status', ({ tv }) => {
@@ -463,11 +412,12 @@ socket.on('room-status', ({ tv }) => {
     ? `${transportMode === 'direct' ? 'RÁPIDO' : 'TV conectada'} • ${room}`
     : `Aguardando TV • ${room}`;
   sensorBadge.className = `badge ${tv ? 'online' : 'waiting'}`;
-  if (tv) broadcastCalibration(handBinder.status(), performance.now(), true);
 });
 
 socket.on('game-command', (payload = {}) => {
-  if (payload.command === 'recalibrate-sensors') restartSensorCalibration();
+  if (payload.command !== 'recalibrate-sensors') return;
+  handAnchor.reset();
+  resetOutputFilters();
 });
 
 socket.on('disconnect', () => {
@@ -486,7 +436,7 @@ startButton.addEventListener('click', async () => {
   }
 
   startButton.disabled = true;
-  startButton.textContent = 'Preparando rastreamento rápido…';
+  startButton.textContent = 'Preparando detector de mãos…';
 
   try {
     await socket.connect();
@@ -495,7 +445,11 @@ startButton.addEventListener('click', async () => {
       throw new Error(joinResult?.error || 'Não foi possível entrar na sala.');
     }
 
-    landmarker = await createLandmarker();
+    const [poseTask] = await Promise.all([
+      createPoseLandmarker(),
+      handAnchor.init()
+    ]);
+    landmarker = poseTask;
     await startCamera();
     joinPanel.classList.add('hidden');
     cameraPanel.classList.remove('hidden');
@@ -505,11 +459,12 @@ startButton.addEventListener('click', async () => {
       : `Aguardando TV • ${room}`;
     sensorBadge.className = `badge ${joinResult.status?.tv ? 'online' : 'waiting'}`;
     running = true;
-    restartSensorCalibration();
+    resetOutputFilters();
     schedulePrediction();
   } catch (error) {
     console.error(error);
     alert(`Falha ao iniciar: ${error.message}`);
+    handAnchor.close();
     startButton.disabled = false;
     startButton.textContent = 'Conectar e abrir câmera';
   }
@@ -519,6 +474,7 @@ function cleanup() {
   running = false;
   activeStream?.getTracks?.().forEach((track) => track.stop());
   landmarker?.close?.();
+  handAnchor.close();
 }
 
 window.addEventListener('pagehide', cleanup, { once: true });
