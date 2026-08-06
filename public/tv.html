@@ -8,17 +8,6 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body class="tv-page">
-  <header class="topbar tv-topbar">
-    <div class="brand-lockup">
-      <span class="brand-mark">M</span>
-      <div><strong>MexeMundo</strong><small>Estoura-Balões</small></div>
-    </div>
-    <div class="top-actions">
-      <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
-      <button id="fullscreenButton" class="icon-button" type="button" aria-label="Abrir em tela cheia">⛶</button>
-    </div>
-  </header>
-
   <main class="tv-layout">
     <section class="game-shell" aria-label="Área do jogo">
       <canvas id="gameCanvas"></canvas>
@@ -37,6 +26,10 @@
         <h2>Levante as duas mãos para começar</h2>
         <p id="calibrationInstruction">Primeiro, abra <strong>/celular</strong> no celular e informe o código abaixo.</p>
         <div id="roomCode" class="room-code">----</div>
+        <div class="preparation-actions">
+          <div id="connectionBadge" class="badge waiting">Aguardando celular</div>
+          <button id="fullscreenButton" class="button secondary fullscreen-action" type="button" data-hand-target="true">⛶ Tela cheia</button>
+        </div>
         <p class="room-hint">Assim que o celular conectar, fique de frente para a câmera e mantenha as duas mãos acima dos ombros.</p>
         <div class="calibration-meter"><span id="calibrationProgress"></span></div>
         <strong id="calibrationMessage" aria-live="polite">Aguardando o celular conectar…</strong>
