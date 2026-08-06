@@ -5,9 +5,7 @@ const TARGET_SELECTOR = '[data-hand-target], button:not([disabled]), a[href], su
 const DWELL_MS = 1700;
 const RESULT_DWELL_MS = 1300;
 const MISSING_GRACE_MS = 180;
-const STABLE_DISTANCE = 0.016;
-const INTERACTION_MIN_X = 0.15;
-const INTERACTION_MAX_X = 0.85;
+const STABLE_DISTANCE = 0.012;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -21,14 +19,50 @@ function playing() {
   return visible(document.querySelector('#scoreHud'));
 }
 
-function validRightHand(payload) {
-  const hand = payload?.right;
+function validHand(hand, payload) {
   return Boolean(
     payload?.detected
     && hand?.visible
     && Number.isFinite(hand.x)
     && Number.isFinite(hand.y)
   );
+}
+
+class VisualHandFilter {
+  constructor(x) {
+    this.x = x;
+    this.y = 0.55;
+    this.ready = false;
+  }
+
+  update(hand, dt) {
+    if (!validHand(hand, { detected: true })) return null;
+    const targetX = clamp((hand.x - 0.06) / 0.88, 0.02, 0.98);
+    const targetY = clamp((hand.y - 0.06) / 0.88, 0.03, 0.97);
+
+    if (!this.ready) {
+      this.x = targetX;
+      this.y = targetY;
+      this.ready = true;
+      return { x: this.x, y: this.y };
+    }
+
+    const distance = Math.hypot(targetX - this.x, targetY - this.y);
+    const speed = Math.hypot(Number(hand.vx) || 0, Number(hand.vy) || 0);
+    const moving = speed > 0.11 || distance > 0.018;
+    const timeConstant = moving ? 0.028 : 0.085;
+    const alpha = 1 - Math.exp(-Math.max(1 / 120, dt / 1000) / timeConstant);
+
+    if (!moving && distance < 0.0024) return { x: this.x, y: this.y };
+
+    this.x += (targetX - this.x) * alpha;
+    this.y += (targetY - this.y) * alpha;
+    return { x: this.x, y: this.y };
+  }
+
+  reset() {
+    this.ready = false;
+  }
 }
 
 function installInterfaceElements() {
@@ -64,51 +98,59 @@ function installInterfaceElements() {
     summary.dataset.handTarget = 'true';
   });
 
-  if (!document.querySelector('#rightHandMenuCursor')) {
-    const cursor = document.createElement('div');
-    cursor.id = 'rightHandMenuCursor';
-    cursor.innerHTML = '<span>✋</span>';
-    cursor.setAttribute('aria-hidden', 'true');
-    document.body.append(cursor);
+  if (!document.querySelector('#handInterfaceLayer')) {
+    const layer = document.createElement('div');
+    layer.id = 'handInterfaceLayer';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.innerHTML = `
+      <div id="leftInterfaceHand" class="interface-hand left"><span>✋</span></div>
+      <div id="rightInterfaceHand" class="interface-hand right"><span>✋</span></div>
+    `;
+    document.body.append(layer);
   }
 
   if (!document.querySelector('#rightHandMenuStyle')) {
     const style = document.createElement('style');
     style.id = 'rightHandMenuStyle';
     style.textContent = `
-      #rightHandMenuCursor {
-        --progress: 0;
+      #handInterfaceLayer {
         position: fixed;
-        z-index: 100000;
+        inset: 0;
+        z-index: 2147483647;
+        pointer-events: none;
+      }
+      .interface-hand {
+        --progress: 0;
+        position: absolute;
         left: 0;
         top: 0;
         width: 72px;
         height: 72px;
         display: grid;
         place-items: center;
-        pointer-events: none;
         opacity: 0;
         transform: translate3d(-100px,-100px,0) translate(-50%,-50%);
         filter: drop-shadow(0 8px 12px rgba(20,18,70,.35));
         transition: opacity .12s ease;
       }
-      #rightHandMenuCursor span {
+      .interface-hand span {
         position: relative;
         z-index: 2;
         font-size: 54px;
         line-height: 1;
-        transform: rotate(-8deg);
       }
-      #rightHandMenuCursor::after {
+      .interface-hand.left span { transform: rotate(8deg) scaleX(-1); }
+      .interface-hand.right span { transform: rotate(-8deg); }
+      .interface-hand.right::after {
         content: '';
         position: absolute;
-        inset: 2px;
+        inset: 1px;
         border-radius: 50%;
         border: 6px solid rgba(255,224,102,.95);
         clip-path: inset(0 calc((1 - var(--progress)) * 100%) 0 0);
         opacity: calc(var(--progress) * .9);
       }
-      #rightHandMenuCursor.active { opacity: 1; }
+      .interface-hand.active { opacity: 1; }
       [data-hand-target].hand-hover,
       button.hand-hover,
       a.hand-hover,
@@ -126,10 +168,13 @@ function installInterfaceElements() {
 class RightHandMenuController {
   constructor() {
     installInterfaceElements();
-    this.cursor = document.querySelector('#rightHandMenuCursor');
+    this.leftHand = document.querySelector('#leftInterfaceHand');
+    this.rightHand = document.querySelector('#rightInterfaceHand');
     this.latest = null;
     this.lastValidAt = 0;
-    this.lastFrameAt = 0;
+    this.lastFrameAt = performance.now();
+    this.leftFilter = new VisualHandFilter(0.35);
+    this.rightFilter = new VisualHandFilter(0.65);
     this.x = 0.5;
     this.y = 0.5;
     this.previousX = null;
@@ -151,12 +196,24 @@ class RightHandMenuController {
     this.elapsed = 0;
     this.previousX = null;
     this.previousY = null;
-    this.cursor.style.setProperty('--progress', '0');
+    this.rightHand.style.setProperty('--progress', '0');
   }
 
   hide() {
-    this.cursor.classList.remove('active');
+    this.leftHand.classList.remove('active');
+    this.rightHand.classList.remove('active');
+    this.leftFilter.reset();
+    this.rightFilter.reset();
     this.clearTarget();
+  }
+
+  place(element, point) {
+    if (!point) {
+      element.classList.remove('active');
+      return;
+    }
+    element.classList.add('active');
+    element.style.transform = `translate3d(${point.x * innerWidth}px, ${point.y * innerHeight}px, 0) translate(-50%,-50%)`;
   }
 
   findTarget() {
@@ -171,27 +228,35 @@ class RightHandMenuController {
 
   frame(now) {
     requestAnimationFrame(this.frame);
+    const dt = clamp(now - this.lastFrameAt, 0, 50);
+    this.lastFrameAt = now;
 
     if (playing()) {
       this.hide();
-      this.lastFrameAt = now;
       return;
     }
 
-    if (validRightHand(this.latest)) {
-      this.lastValidAt = now;
-      const normalizedX = clamp((this.latest.right.x - 0.12) / 0.76);
-      this.x = INTERACTION_MIN_X + normalizedX * (INTERACTION_MAX_X - INTERACTION_MIN_X);
-      this.y = clamp((this.latest.right.y - 0.06) / 0.88, 0.03, 0.97);
-    } else if (now - this.lastValidAt > MISSING_GRACE_MS) {
+    const leftValid = validHand(this.latest?.left, this.latest);
+    const rightValid = validHand(this.latest?.right, this.latest);
+    if (leftValid || rightValid) this.lastValidAt = now;
+
+    if (!leftValid && !rightValid && now - this.lastValidAt > MISSING_GRACE_MS) {
       this.hide();
-      this.lastFrameAt = now;
       return;
     }
 
-    this.cursor.classList.add('active');
-    this.cursor.style.transform = `translate3d(${this.x * innerWidth}px, ${this.y * innerHeight}px, 0) translate(-50%,-50%)`;
+    const leftPoint = leftValid ? this.leftFilter.update(this.latest.left, dt) : null;
+    const rightPoint = rightValid ? this.rightFilter.update(this.latest.right, dt) : null;
+    this.place(this.leftHand, leftPoint);
+    this.place(this.rightHand, rightPoint);
 
+    if (!rightPoint) {
+      this.clearTarget();
+      return;
+    }
+
+    this.x = rightPoint.x;
+    this.y = rightPoint.y;
     const nextTarget = this.findTarget();
     if (nextTarget !== this.target) {
       this.clearTarget();
@@ -199,12 +264,9 @@ class RightHandMenuController {
       this.target?.classList.add('hand-hover');
       this.previousX = this.x;
       this.previousY = this.y;
-      this.lastFrameAt = now;
       return;
     }
 
-    const dt = this.lastFrameAt ? clamp(now - this.lastFrameAt, 0, 50) : 0;
-    this.lastFrameAt = now;
     if (!this.target) return;
 
     const movement = this.previousX === null
@@ -220,7 +282,7 @@ class RightHandMenuController {
       ? RESULT_DWELL_MS
       : DWELL_MS;
     const progress = clamp(this.elapsed / dwell);
-    this.cursor.style.setProperty('--progress', String(progress));
+    this.rightHand.style.setProperty('--progress', String(progress));
 
     if (progress < 1 || now < this.cooldownUntil) return;
     const selected = this.target;
