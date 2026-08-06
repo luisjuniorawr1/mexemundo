@@ -143,27 +143,21 @@ function createGameMenu() {
         <strong>Goleiro</strong>
         <small>Em breve</small>
       </button>
-      <button id="drumsGameCard" class="game-menu-card" type="button" data-hand-target="true">
+      <button class="game-menu-card" type="button" disabled>
         <span class="game-menu-icon">🥁</span>
-        <strong>Bateria Mágica</strong>
-        <small>Toque livre com as duas mãos</small>
+        <strong>Bateria</strong>
+        <small>Em breve</small>
       </button>
     </div>
     <p class="game-menu-tip">A mão direita é o cursor. As opções ficam na área central para facilitar o alcance.</p>
   `;
   gameShell.append(menu);
 
-  const selectGame = (game) => {
+  menu.querySelector('#balloonGameCard').addEventListener('click', () => {
     gameSelected = true;
-    window.dispatchEvent(new CustomEvent('mexemundo:game-selected', {
-      detail: { game }
-    }));
     menu.classList.add('hidden');
     document.querySelector('#countdownPanel')?.classList.remove('hidden');
-  };
-
-  menu.querySelector('#balloonGameCard').addEventListener('click', () => selectGame('balloons'));
-  menu.querySelector('#drumsGameCard').addEventListener('click', () => selectGame('drums'));
+  });
 }
 
 function keepCalibrationAsInitialScreen() {
