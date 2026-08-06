@@ -68,7 +68,7 @@ function installHandNavigation() {
     .game-menu-lead { margin: 0 0 24px; }
     .game-menu-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
     }
     .game-menu-card {
@@ -141,11 +141,6 @@ function createGameMenu() {
       <button class="game-menu-card" type="button" disabled>
         <span class="game-menu-icon">🥅</span>
         <strong>Goleiro</strong>
-        <small>Em breve</small>
-      </button>
-      <button class="game-menu-card" type="button" disabled>
-        <span class="game-menu-icon">🥁</span>
-        <strong>Bateria</strong>
         <small>Em breve</small>
       </button>
     </div>
