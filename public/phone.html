@@ -11,7 +11,7 @@
   <header class="topbar phone-topbar">
     <div class="brand-lockup">
       <span class="brand-mark">M</span>
-      <div><strong>MexeMundo</strong><small>Detector dedicado de mãos</small></div>
+      <div><strong>MexeMundo</strong><small>Palmas em segundo plano</small></div>
     </div>
     <div id="sensorBadge" class="badge waiting">Desconectado</div>
   </header>
@@ -31,7 +31,7 @@
     <section id="cameraPanel" class="camera-panel hidden">
       <div class="camera-header phone-card">
         <div>
-          <span class="eyebrow">PALMAS + CORPO</span>
+          <span class="eyebrow">PALMAS + CORPO • WORKER</span>
           <strong id="trackingStatus">Preparando detectores…</strong>
         </div>
         <span id="poseQuality" class="quality-badge">0/2</span>
@@ -53,6 +53,7 @@
     </section>
   </main>
 
+  <script src="/js/hand-worker-compat.js?v=0.10.23"></script>
   <script type="module" src="/js/phone.js"></script>
 </body>
 </html>
