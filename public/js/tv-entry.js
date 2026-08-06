@@ -2,6 +2,7 @@ import { installRightHandMenu } from './right-hand-menu.js';
 
 let menuOpened = false;
 let gameSelected = false;
+window.mexemundoSelectedGame = 'balloons';
 
 const nativeSetInterval = window.setInterval.bind(window);
 window.setInterval = (callback, delay, ...args) => {
@@ -104,6 +105,10 @@ function installHandNavigation() {
       font-size: .9rem;
       font-weight: 850;
     }
+    .score-hud.car-ride-active {
+      opacity: 0;
+      pointer-events: none;
+    }
     @media (max-width: 760px) {
       #calibrationPanel,
       #gameMenuPanel,
@@ -138,21 +143,25 @@ function createGameMenu() {
         <strong>Estoura-Balões</strong>
         <small>Use as duas mãos para estourar</small>
       </button>
-      <button class="game-menu-card" type="button" disabled>
-        <span class="game-menu-icon">🥅</span>
-        <strong>Goleiro</strong>
-        <small>Em breve</small>
+      <button id="carRideGameCard" class="game-menu-card" type="button" data-hand-target="true">
+        <span class="game-menu-icon">🚗</span>
+        <strong>Passeio de Carro</strong>
+        <small>Gire um volante com as duas mãos</small>
       </button>
     </div>
     <p class="game-menu-tip">A mão direita é o cursor. As opções ficam na área central para facilitar o alcance.</p>
   `;
   gameShell.append(menu);
 
-  menu.querySelector('#balloonGameCard').addEventListener('click', () => {
+  const selectGame = (game) => {
+    window.mexemundoSelectedGame = game;
     gameSelected = true;
     menu.classList.add('hidden');
     document.querySelector('#countdownPanel')?.classList.remove('hidden');
-  });
+  };
+
+  menu.querySelector('#balloonGameCard').addEventListener('click', () => selectGame('balloons'));
+  menu.querySelector('#carRideGameCard').addEventListener('click', () => selectGame('car-ride'));
 }
 
 function keepCalibrationAsInitialScreen() {
