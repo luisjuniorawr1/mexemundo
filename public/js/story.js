@@ -375,11 +375,15 @@ socket.on('room-status', ({ phone }) => {
     ? `Celular conectado • ${room}`
     : `Aguardando celular • ${room || '----'}`;
   connectionBadge.className = `story-badge ${phoneConnected ? 'online' : 'waiting'}`;
-  if (!phoneConnected && state !== 'invalid-room') state = 'waiting';
+  if (!phoneConnected && state !== 'invalid-room') {
+    state = 'waiting';
+    calibrationStartedAt = 0;
+  }
 });
 socket.on('disconnect', () => {
   phoneConnected = false;
   state = 'waiting';
+  calibrationStartedAt = 0;
 });
 
 async function connect() {
