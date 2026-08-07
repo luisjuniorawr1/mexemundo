@@ -90,7 +90,8 @@ function installHandNavigation() {
       background: linear-gradient(160deg, #fffdf2, #e9f5df);
       border-color: rgba(70,126,74,.18);
     }
-    .game-menu-card.hand-hover {
+    .game-menu-card.hand-hover,
+    .story-back-button.hand-hover {
       border-color: #ffcf4a;
       outline: 8px solid rgba(255,207,74,.35) !important;
       transform: scale(1.045);
@@ -109,13 +110,46 @@ function installHandNavigation() {
       font-size: .9rem;
       font-weight: 850;
     }
+    .story-library-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      min-height: 54px;
+      margin-bottom: 4px;
+    }
+    .story-library-header .eyebrow { margin: 0; }
+    .story-back-button {
+      position: absolute;
+      left: 0;
+      top: 0;
+      min-width: 120px;
+      min-height: 48px;
+      padding: 0 16px;
+      border: 3px solid rgba(105,56,239,.13);
+      border-radius: 16px;
+      background: #fff;
+      color: #3c3163;
+      font-weight: 900;
+      cursor: default;
+    }
+    .story-library-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      max-width: 650px;
+      margin-inline: auto;
+    }
+    .story-library-grid .game-menu-card { min-height: 250px; }
+    .story-coming-soon {
+      background: linear-gradient(160deg, #f8f8fb, #ececf4);
+    }
     .score-hud.car-ride-active {
       opacity: 0;
       pointer-events: none;
     }
     @media (max-width: 980px) {
       .game-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .story-card { grid-column: 1 / -1; }
+      #storiesCategoryCard { grid-column: 1 / -1; }
+      .story-library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 760px) {
       #calibrationPanel,
@@ -125,10 +159,13 @@ function installHandNavigation() {
       .preparation-actions { gap: 10px; }
       .preparation-actions .badge,
       .fullscreen-action { width: min(100%, 300px); }
-      .game-menu-grid { grid-template-columns: 1fr; }
-      .story-card { grid-column: auto; }
+      .game-menu-grid,
+      .story-library-grid { grid-template-columns: 1fr; }
+      #storiesCategoryCard { grid-column: auto; }
       .game-menu-card { min-height: 120px; grid-template-columns: auto 1fr; text-align: left; }
       .game-menu-icon { font-size: 3rem; grid-row: span 2; }
+      .story-library-header { justify-content: flex-end; padding-left: 130px; }
+      .story-library-grid .game-menu-card { min-height: 130px; }
     }
   `;
   document.head.append(style);
@@ -143,29 +180,66 @@ function createGameMenu() {
   menu.className = 'modal-card hidden';
   menu.setAttribute('aria-label', 'Menu de jogos e histórias');
   menu.innerHTML = `
-    <span class="eyebrow">ESCOLHA UMA EXPERIÊNCIA</span>
-    <h2>Para onde vamos agora?</h2>
-    <p class="game-menu-lead">Mova a mão direita até uma opção e mantenha-a parada para selecionar.</p>
-    <div class="game-menu-grid">
-      <button id="forestStoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
-        <span class="game-menu-icon">🌲</span>
-        <strong>O Filhote Perdido</strong>
-        <small>História interativa na floresta</small>
-      </button>
-      <button id="balloonGameCard" class="game-menu-card" type="button" data-hand-target="true">
-        <span class="game-menu-icon">🎈</span>
-        <strong>Estoura-Balões</strong>
-        <small>Use as duas mãos para estourar</small>
-      </button>
-      <button id="carRideGameCard" class="game-menu-card" type="button" data-hand-target="true">
-        <span class="game-menu-icon">🚗</span>
-        <strong>Passeio de Carro</strong>
-        <small>Gire um volante com as duas mãos</small>
-      </button>
+    <div id="mainExperienceView">
+      <span class="eyebrow">ESCOLHA UMA EXPERIÊNCIA</span>
+      <h2>O que vamos fazer?</h2>
+      <p class="game-menu-lead">Mova a mão direita até uma opção e mantenha-a parada para selecionar.</p>
+      <div class="game-menu-grid">
+        <button id="storiesCategoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
+          <span class="game-menu-icon">📖</span>
+          <strong>Histórias</strong>
+          <small>Entre em aventuras interativas</small>
+        </button>
+        <button id="balloonGameCard" class="game-menu-card" type="button" data-hand-target="true">
+          <span class="game-menu-icon">🎈</span>
+          <strong>Estoura-Balões</strong>
+          <small>Use as duas mãos para estourar</small>
+        </button>
+        <button id="carRideGameCard" class="game-menu-card" type="button" data-hand-target="true">
+          <span class="game-menu-icon">🚗</span>
+          <strong>Passeio de Carro</strong>
+          <small>Gire um volante com as duas mãos</small>
+        </button>
+      </div>
+      <p class="game-menu-tip">A mão direita é o cursor. O celular continua parado durante todas as experiências.</p>
     </div>
-    <p class="game-menu-tip">A mão direita é o cursor. O celular continua parado durante todas as experiências.</p>
+
+    <div id="storyLibraryView" class="hidden">
+      <div class="story-library-header">
+        <button id="storyLibraryBack" class="story-back-button" type="button" data-hand-target="true">← Voltar</button>
+        <span class="eyebrow">HISTÓRIAS MEXEMUNDO</span>
+      </div>
+      <h2>Escolha uma aventura</h2>
+      <p class="game-menu-lead">Cada história mistura narrativa e movimentos do corpo.</p>
+      <div class="game-menu-grid story-library-grid">
+        <button id="forestStoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
+          <span class="game-menu-icon">🌲</span>
+          <strong>O Filhote Perdido</strong>
+          <small>Aventura interativa na floresta</small>
+        </button>
+        <button class="game-menu-card story-coming-soon" type="button" disabled aria-disabled="true">
+          <span class="game-menu-icon">✨</span>
+          <strong>Próxima aventura</strong>
+          <small>Em breve</small>
+        </button>
+      </div>
+      <p class="game-menu-tip">Novas histórias poderão aparecer aqui sem aumentar o menu principal.</p>
+    </div>
   `;
   gameShell.append(menu);
+
+  const mainView = menu.querySelector('#mainExperienceView');
+  const storyLibraryView = menu.querySelector('#storyLibraryView');
+
+  const showMainMenu = () => {
+    storyLibraryView.classList.add('hidden');
+    mainView.classList.remove('hidden');
+  };
+
+  const showStoryLibrary = () => {
+    mainView.classList.add('hidden');
+    storyLibraryView.classList.remove('hidden');
+  };
 
   const selectGame = (game) => {
     if (game === 'forest-story') {
@@ -181,6 +255,9 @@ function createGameMenu() {
     document.querySelector('#countdownPanel')?.classList.remove('hidden');
   };
 
+  menu.showMainMenu = showMainMenu;
+  menu.querySelector('#storiesCategoryCard').addEventListener('click', showStoryLibrary);
+  menu.querySelector('#storyLibraryBack').addEventListener('click', showMainMenu);
   menu.querySelector('#forestStoryCard').addEventListener('click', () => selectGame('forest-story'));
   menu.querySelector('#balloonGameCard').addEventListener('click', () => selectGame('balloons'));
   menu.querySelector('#carRideGameCard').addEventListener('click', () => selectGame('car-ride'));
@@ -228,6 +305,7 @@ function openMenuAfterCalibration() {
     if (gameSelected || menuOpened || countdownPanel.classList.contains('hidden')) return;
     menuOpened = true;
     countdownPanel.classList.add('hidden');
+    menu.showMainMenu?.();
     menu.classList.remove('hidden');
   };
 
@@ -244,9 +322,9 @@ function installReturnToGameMenu() {
   const menu = document.querySelector('#gameMenuPanel');
   if (!returnButton || !restartButton || !resultPanel || !countdownPanel || !menu) return;
 
-  returnButton.textContent = 'Escolher outro jogo';
+  returnButton.textContent = 'Escolher outra experiência';
   returnButton.setAttribute('href', '#gameMenuPanel');
-  returnButton.setAttribute('aria-label', 'Escolher outro jogo sem desconectar o celular');
+  returnButton.setAttribute('aria-label', 'Escolher outra experiência sem desconectar o celular');
 
   returnButton.addEventListener('click', (event) => {
     event.preventDefault();
@@ -256,6 +334,7 @@ function installReturnToGameMenu() {
     restartButton.click();
     resultPanel.classList.add('hidden');
     countdownPanel.classList.add('hidden');
+    menu.showMainMenu?.();
     menu.classList.remove('hidden');
   });
 }
