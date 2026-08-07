@@ -1,8 +1,40 @@
+import { RealtimeClient } from './realtime.js';
 import { installRightHandMenu } from './right-hand-menu.js';
 
 let menuOpened = false;
 let gameSelected = false;
+let storyActive = false;
+let storyLoaded = false;
+let storyFrameCallback = null;
+let primaryRealtimeClient = null;
+let embeddingStoryClient = false;
+let storyBridgeInstalled = false;
+let storyRoom = '';
+const embeddedRealtimeClients = new WeakSet();
 window.mexemundoSelectedGame = 'balloons';
+
+const captureOn = RealtimeClient.prototype.on;
+RealtimeClient.prototype.on = function capturePrimaryRealtimeClient(type, callback) {
+  if (!primaryRealtimeClient && !embeddingStoryClient) primaryRealtimeClient = this;
+  return captureOn.call(this, type, callback);
+};
+
+const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+window.requestAnimationFrame = (callback) => {
+  if (!storyFrameCallback && storyActive) {
+    try {
+      const source = Function.prototype.toString.call(callback);
+      if (source.includes('updateSetup') && source.includes('drawScene') && source.includes('updateParticles')) {
+        storyFrameCallback = callback;
+      }
+    } catch {
+      // Se o navegador não permitir inspecionar a função, a história apenas continua ativa.
+    }
+  }
+
+  if (callback === storyFrameCallback && !storyActive) return 0;
+  return nativeRequestAnimationFrame(callback);
+};
 
 const nativeSetInterval = window.setInterval.bind(window);
 window.setInterval = (callback, delay, ...args) => {
@@ -113,6 +145,14 @@ function installHandNavigation() {
       opacity: 0;
       pointer-events: none;
     }
+    .embedded-story-shell {
+      position: fixed !important;
+      inset: 0;
+      z-index: 5000;
+    }
+    body.story-active #handInterfaceLayer { display: none; }
+    body.story-active.story-ending #handInterfaceLayer { display: block; }
+    #storyBackToMenu { background: #334c40; }
     @media (max-width: 980px) {
       .game-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .story-card { grid-column: 1 / -1; }
@@ -132,6 +172,200 @@ function installHandNavigation() {
     }
   `;
   document.head.append(style);
+}
+
+function ensureStoryStyles() {
+  if (document.querySelector('#mexemundoStoryStyles')) return;
+  const link = document.createElement('link');
+  link.id = 'mexemundoStoryStyles';
+  link.rel = 'stylesheet';
+  link.href = '/story.css';
+  document.head.append(link);
+}
+
+function createEmbeddedStory() {
+  const gameShell = document.querySelector('.game-shell');
+  if (!gameShell) return null;
+  const existing = document.querySelector('#storyExperience');
+  if (existing) return existing;
+
+  ensureStoryStyles();
+  const story = document.createElement('section');
+  story.id = 'storyExperience';
+  story.className = 'story-shell embedded-story-shell hidden';
+  story.setAttribute('aria-label', 'História O Filhote Perdido');
+  story.innerHTML = `
+    <canvas id="storyCanvas" aria-label="História O Filhote Perdido"></canvas>
+
+    <header class="story-topbar">
+      <div>
+        <span class="story-kicker">MEXEMUNDO • HISTÓRIA</span>
+        <strong>O Filhote Perdido</strong>
+      </div>
+      <div id="storyConnectionBadge" class="story-badge waiting">Celular conectado</div>
+    </header>
+
+    <section id="messageCard" class="message-card">
+      <span id="messageEyebrow">PREPARANDO A AVENTURA</span>
+      <h1 id="messageTitle">Fique de frente para a câmera</h1>
+      <p id="messageText">Mantenha o celular parado e deixe suas duas mãos aparecerem.</p>
+      <div class="meter"><span id="messageProgress"></span></div>
+    </section>
+
+    <div id="objective" class="objective hidden"></div>
+    <div id="storyProgress" class="story-progress" aria-label="Progresso da história"></div>
+
+    <section id="endingCard" class="ending-card hidden">
+      <div class="ending-stars">✦ ✦ ✦</div>
+      <span>MISSÃO CONCLUÍDA</span>
+      <h2>O filhote voltou para casa!</h2>
+      <p>Você seguiu as pistas, ajudou os animais e encontrou o pequeno explorador.</p>
+      <button id="storyRestartButton" type="button">Viver a aventura novamente</button>
+      <button id="storyBackToMenu" type="button" data-hand-target="true">Voltar ao MexeMundo</button>
+      <small>Você também pode levantar as duas mãos para repetir a aventura.</small>
+    </section>
+
+    <div class="safe-hint">Deixe um espaço livre ao redor de você 👣</div>
+  `;
+  gameShell.append(story);
+
+  const endingCard = story.querySelector('#endingCard');
+  new MutationObserver(() => {
+    document.body.classList.toggle(
+      'story-ending',
+      storyActive && !endingCard.classList.contains('hidden')
+    );
+  }).observe(endingCard, { attributes: true, attributeFilter: ['class'] });
+
+  story.querySelector('#storyBackToMenu').addEventListener('click', closeEmbeddedStory);
+  return story;
+}
+
+function installEmbeddedRealtimeBridge(sharedClient, room) {
+  storyRoom = room;
+  if (storyBridgeInstalled) return;
+  storyBridgeInstalled = true;
+
+  const prototype = RealtimeClient.prototype;
+  const baseOn = prototype.on;
+  const baseConnect = prototype.connect;
+  const baseRequest = prototype.request;
+
+  prototype.on = function onWithEmbeddedStory(type, callback) {
+    if (embeddingStoryClient && this !== sharedClient) embeddedRealtimeClients.add(this);
+    if (embeddedRealtimeClients.has(this)) return baseOn.call(sharedClient, type, callback);
+    return baseOn.call(this, type, callback);
+  };
+
+  prototype.connect = function connectWithEmbeddedStory(...args) {
+    if (embeddedRealtimeClients.has(this)) return Promise.resolve();
+    return baseConnect.apply(this, args);
+  };
+
+  prototype.request = function requestWithEmbeddedStory(type, payload = {}, timeoutMs = 5000) {
+    if (!embeddedRealtimeClients.has(this)) {
+      return baseRequest.call(this, type, payload, timeoutMs);
+    }
+
+    if (type === 'join') {
+      return Promise.resolve({
+        ok: true,
+        room: storyRoom,
+        status: sharedClient.roomStatus ?? { tv: true, phone: true }
+      });
+    }
+
+    return baseRequest.call(sharedClient, type, payload, timeoutMs);
+  };
+}
+
+function prepareStoryIdsForImport(story) {
+  const tvBadge = document.querySelector('#connectionBadge');
+  const tvRestart = document.querySelector('#restartButton');
+  const storyBadge = story.querySelector('#storyConnectionBadge');
+  const storyRestart = story.querySelector('#storyRestartButton');
+
+  if (tvBadge) tvBadge.id = 'tvConnectionBadge';
+  if (tvRestart) tvRestart.id = 'tvRestartButton';
+  if (storyBadge) storyBadge.id = 'connectionBadge';
+  if (storyRestart) storyRestart.id = 'restartButton';
+
+  return () => {
+    if (storyBadge) storyBadge.id = 'storyConnectionBadge';
+    if (storyRestart) storyRestart.id = 'storyRestartButton';
+    if (tvBadge) tvBadge.id = 'connectionBadge';
+    if (tvRestart) tvRestart.id = 'restartButton';
+  };
+}
+
+async function loadEmbeddedStory(story) {
+  if (storyLoaded) return;
+  const room = document.querySelector('#roomCode')?.textContent?.trim() || '';
+  const sharedClient = primaryRealtimeClient;
+
+  if (!sharedClient || !room) {
+    throw new Error('A conexão principal da TV ainda não está pronta.');
+  }
+
+  installEmbeddedRealtimeBridge(sharedClient, room);
+  const restoreIds = prepareStoryIdsForImport(story);
+  const previousUrl = `${location.pathname}${location.search}${location.hash}`;
+
+  embeddingStoryClient = true;
+  history.replaceState(history.state, '', `/tv?sala=${encodeURIComponent(room)}`);
+  try {
+    await import('./story.js');
+    storyLoaded = true;
+  } finally {
+    embeddingStoryClient = false;
+    restoreIds();
+    history.replaceState(history.state, '', previousUrl || '/tv');
+  }
+}
+
+async function openEmbeddedStory() {
+  const menu = document.querySelector('#gameMenuPanel');
+  const story = createEmbeddedStory();
+  if (!story) return;
+
+  menu?.classList.add('hidden');
+  document.querySelector('#countdownPanel')?.classList.add('hidden');
+  document.querySelector('#resultPanel')?.classList.add('hidden');
+  document.body.classList.add('story-active');
+  document.body.classList.remove('story-ending');
+  story.classList.remove('hidden');
+  storyActive = true;
+
+  try {
+    if (!storyLoaded) {
+      await loadEmbeddedStory(story);
+      return;
+    }
+
+    story.querySelector('#storyRestartButton')?.click();
+    if (storyFrameCallback) nativeRequestAnimationFrame(storyFrameCallback);
+  } catch (error) {
+    console.error(error);
+    story.classList.add('hidden');
+    storyActive = false;
+    document.body.classList.remove('story-active', 'story-ending');
+    menu?.classList.remove('hidden');
+    alert('Não foi possível abrir a história. Tente novamente.');
+  }
+}
+
+function closeEmbeddedStory() {
+  const story = document.querySelector('#storyExperience');
+  const menu = document.querySelector('#gameMenuPanel');
+
+  storyActive = false;
+  story?.classList.add('hidden');
+  document.body.classList.remove('story-active', 'story-ending');
+  document.querySelector('#countdownPanel')?.classList.add('hidden');
+  document.querySelector('#resultPanel')?.classList.add('hidden');
+  menuOpened = true;
+  gameSelected = false;
+  menu?.classList.remove('hidden');
 }
 
 function createGameMenu() {
@@ -169,9 +403,7 @@ function createGameMenu() {
 
   const selectGame = (game) => {
     if (game === 'forest-story') {
-      gameSelected = true;
-      const room = document.querySelector('#roomCode')?.textContent?.trim() || '';
-      location.href = `/story.html?sala=${encodeURIComponent(room)}`;
+      openEmbeddedStory();
       return;
     }
 
@@ -225,7 +457,7 @@ function openMenuAfterCalibration() {
   if (!countdownPanel || !menu) return;
 
   const syncMenu = () => {
-    if (gameSelected || menuOpened || countdownPanel.classList.contains('hidden')) return;
+    if (storyActive || gameSelected || menuOpened || countdownPanel.classList.contains('hidden')) return;
     menuOpened = true;
     countdownPanel.classList.add('hidden');
     menu.classList.remove('hidden');
