@@ -214,9 +214,34 @@ function openMenuAfterCalibration() {
   syncMenu();
 }
 
+function installReturnToGameMenu() {
+  const returnButton = document.querySelector('.hand-home-result');
+  const restartButton = document.querySelector('#restartButton');
+  const resultPanel = document.querySelector('#resultPanel');
+  const countdownPanel = document.querySelector('#countdownPanel');
+  const menu = document.querySelector('#gameMenuPanel');
+  if (!returnButton || !restartButton || !resultPanel || !countdownPanel || !menu) return;
+
+  returnButton.textContent = 'Escolher outro jogo';
+  returnButton.setAttribute('href', '#gameMenuPanel');
+  returnButton.setAttribute('aria-label', 'Escolher outro jogo sem desconectar o celular');
+
+  returnButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    gameSelected = false;
+    menuOpened = true;
+
+    restartButton.click();
+    resultPanel.classList.add('hidden');
+    countdownPanel.classList.add('hidden');
+    menu.classList.remove('hidden');
+  });
+}
+
 installHandNavigation();
 createGameMenu();
 installRightHandMenu();
 await import('./tv.js');
 keepCalibrationAsInitialScreen();
 openMenuAfterCalibration();
+installReturnToGameMenu();
