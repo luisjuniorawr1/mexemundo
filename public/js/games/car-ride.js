@@ -66,6 +66,7 @@ const ENVIRONMENT_DURATION_MS = 20000;
 const TRANSITION_MS = 2200;
 const CALIBRATION_MS = 1000;
 const TRAFFIC_TRAVEL_MS = 9200;
+const OVERTAKEN_EXIT_PROGRESS = 1.24;
 const STEERING_DEAD_ZONE = 0.035;
 const STEERING_RANGE = 0.18;
 const MAX_WHEEL_ANGLE = Math.PI * 0.26;
@@ -126,6 +127,7 @@ export class CarRideGame {
     this.feedbackText = '';
     this.feedbackUntil = 0;
     this.resolvedTraffic = new Set();
+    this.overtakenTraffic = new Set();
   }
 
   start(now = performance.now()) {
@@ -148,6 +150,7 @@ export class CarRideGame {
     this.feedbackText = '';
     this.feedbackUntil = 0;
     this.resolvedTraffic.clear();
+    this.overtakenTraffic.clear();
   }
 
   update({ dt, pose }) {
@@ -245,7 +248,7 @@ export class CarRideGame {
 
     for (const item of TRAFFIC) {
       const progress = this.trafficProgress(item);
-      if (progress < 0 || progress > 1.08) continue;
+      if (progress < 0 || progress > OVERTAKEN_EXIT_PROGRESS) continue;
 
       const lane = item.lane * LANE_POSITION;
       const distance = Math.abs(this.playerOffset - lane);
@@ -255,7 +258,9 @@ export class CarRideGame {
 
       if (progress < 0.86 || this.resolvedTraffic.has(item.id)) continue;
       this.resolvedTraffic.add(item.id);
-      this.feedbackText = distance >= 0.31
+      const overtaken = distance >= 0.31;
+      if (overtaken) this.overtakenTraffic.add(item.id);
+      this.feedbackText = overtaken
         ? 'Boa ultrapassagem!'
         : 'Tudo bem, o outro carro deu passagem!';
       this.feedbackUntil = this.elapsedMs + 1300;
@@ -424,18 +429,44 @@ export class CarRideGame {
   drawTraffic(width, height, horizonY) {
     const geometry = this.roadGeometry(width, height, horizonY);
     const active = TRAFFIC
-      .map((item) => ({ item, progress: this.trafficProgress(item) }))
-      .filter(({ progress }) => progress >= 0 && progress <= 1.08)
+      .map((item) => ({
+        item,
+        progress: this.trafficProgress(item),
+        overtaken: this.overtakenTraffic.has(item.id)
+      }))
+      .filter(({ progress, overtaken }) => (
+        progress >= 0
+        && progress <= (overtaken ? OVERTAKEN_EXIT_PROGRESS : 1.08)
+      ))
       .sort((a, b) => a.progress - b.progress);
 
-    for (const { item, progress } of active) {
-      const visual = ease(clamp(progress));
-      const y = lerp(horizonY + height * 0.012, height * 0.93, visual);
+    for (const { item, progress, overtaken } of active) {
+      const baseVisual = ease(clamp(progress));
+      const passStartVisual = ease(0.86);
+      let y = lerp(horizonY + height * 0.012, height * 0.93, baseVisual);
+      let scale = lerp(0.1, 1.05, baseVisual);
+      let alpha = progress > 0.97 ? clamp((1.08 - progress) / 0.11) : 1;
+
+      if (overtaken && progress > 0.86) {
+        const afterPass = ease(
+          (progress - 0.86) / (OVERTAKEN_EXIT_PROGRESS - 0.86)
+        );
+        const passStartY = lerp(
+          horizonY + height * 0.012,
+          height * 0.93,
+          passStartVisual
+        );
+        const passStartScale = lerp(0.1, 1.05, passStartVisual);
+        y = lerp(passStartY, height * 1.18, afterPass);
+        scale = lerp(passStartScale, 1.18, afterPass);
+        alpha = 1;
+      }
+
       const metrics = this.roadMetricsAt(geometry, y);
-      const lane = this.effectiveTrafficLane(item, progress);
+      const lane = overtaken
+        ? item.lane * LANE_POSITION
+        : this.effectiveTrafficLane(item, progress);
       const x = metrics.center + lane * metrics.half * 0.9;
-      const scale = lerp(0.1, 1.05, visual);
-      const alpha = progress > 0.97 ? clamp((1.08 - progress) / 0.11) : 1;
       this.drawTrafficCar(x, y, scale, item.color, alpha);
     }
   }
