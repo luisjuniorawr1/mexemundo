@@ -45,13 +45,38 @@ const ENVIRONMENTS = [
   }
 ];
 
+const CURVE_KEYFRAMES = [
+  [0, 0],
+  [3500, -0.72],
+  [7500, 0.82],
+  [11500, -0.9],
+  [15500, 0.68],
+  [20000, -0.18],
+  [24000, 0.86],
+  [28000, -0.76],
+  [32500, 0.93],
+  [36500, -0.58],
+  [40000, 0.12],
+  [44000, -0.92],
+  [48500, 0.78],
+  [52500, -0.82],
+  [56500, 0.7],
+  [60000, -0.12],
+  [64000, 0.88],
+  [68500, -0.84],
+  [72500, 0.62],
+  [76500, -0.72],
+  [80000, 0]
+];
+
 const RIDE_DURATION_MS = 80000;
 const ENVIRONMENT_DURATION_MS = 20000;
 const TRANSITION_MS = 2200;
 const CALIBRATION_MS = 1000;
 const STEERING_DEAD_ZONE = 0.025;
 const STEERING_RANGE = 0.19;
-const MAX_WHEEL_ANGLE = Math.PI * 0.24;
+const MAX_WHEEL_ANGLE = Math.PI * 0.27;
+const ROAD_PREVIEW_MS = 6200;
 
 function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
@@ -99,7 +124,7 @@ export class CarRideGame {
     this.wheelAngle = 0;
     this.targetWheelAngle = 0;
     this.steering = 0;
-    this.roadOffset = 0;
+    this.cameraOffset = 0;
     this.scroll = 0;
     this.handsVisible = false;
   }
@@ -115,7 +140,7 @@ export class CarRideGame {
     this.wheelAngle = 0;
     this.targetWheelAngle = 0;
     this.steering = 0;
-    this.roadOffset = 0;
+    this.cameraOffset = 0;
     this.scroll = 0;
     this.handsVisible = false;
   }
@@ -162,7 +187,7 @@ export class CarRideGame {
     }
 
     this.elapsedMs += frameMs;
-    this.scroll += seconds * 0.34;
+    this.scroll += seconds * 0.39;
 
     let steering = 0;
     if (handsApart) {
@@ -176,14 +201,26 @@ export class CarRideGame {
 
     this.steering = steering;
     this.targetWheelAngle = steering * MAX_WHEEL_ANGLE;
-    const wheelAlpha = 1 - Math.exp(-seconds / 0.095);
+    const wheelAlpha = 1 - Math.exp(-seconds / 0.085);
     this.wheelAngle += (this.targetWheelAngle - this.wheelAngle) * wheelAlpha;
 
-    const roadTarget = steering * 0.82;
-    const roadAlpha = 1 - Math.exp(-seconds / 0.28);
-    this.roadOffset += (roadTarget - this.roadOffset) * roadAlpha;
+    const cameraTarget = steering * 0.9;
+    const cameraAlpha = 1 - Math.exp(-seconds / 0.22);
+    this.cameraOffset += (cameraTarget - this.cameraOffset) * cameraAlpha;
 
     return this.elapsedMs >= RIDE_DURATION_MS;
+  }
+
+  curveAt(timeMs) {
+    const time = clamp(timeMs, 0, RIDE_DURATION_MS);
+    for (let index = 1; index < CURVE_KEYFRAMES.length; index += 1) {
+      const [nextTime, nextValue] = CURVE_KEYFRAMES[index];
+      if (time > nextTime) continue;
+      const [previousTime, previousValue] = CURVE_KEYFRAMES[index - 1];
+      const amount = ease((time - previousTime) / Math.max(1, nextTime - previousTime));
+      return lerp(previousValue, nextValue, amount);
+    }
+    return 0;
   }
 
   currentEnvironment() {
@@ -223,8 +260,8 @@ export class CarRideGame {
     const edge = mixColor(scene.previous.edge, scene.current.edge, mix);
     const accent = mixColor(scene.previous.accent, scene.current.accent, mix);
 
-    const horizonY = height * 0.38;
-    const gradient = ctx.createLinearGradient(0, 0, 0, horizonY * 1.4);
+    const horizonY = height * 0.37;
+    const gradient = ctx.createLinearGradient(0, 0, 0, horizonY * 1.45);
     gradient.addColorStop(0, skyTop);
     gradient.addColorStop(1, skyBottom);
     ctx.fillStyle = gradient;
@@ -244,6 +281,7 @@ export class CarRideGame {
     }
 
     this.drawRoad(width, height, horizonY, road, edge, accent);
+    this.drawCurveChevrons(width, height, horizonY, accent);
     this.drawDashboard(width, height);
     this.drawWheel(width, height, accent);
     this.drawEnvironmentLabel(width, height, scene.current.name);
@@ -268,13 +306,14 @@ export class CarRideGame {
 
   drawDistantLand(width, height, horizonY, color) {
     const ctx = this.ctx;
+    const farCurve = this.curveAt(this.elapsedMs + ROAD_PREVIEW_MS);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(0, horizonY + height * 0.02);
-    for (let i = 0; i <= 8; i += 1) {
-      const x = (i / 8) * width;
-      const wave = Math.sin(i * 1.7 + this.scroll * 0.35) * height * 0.025;
-      ctx.lineTo(x, horizonY - height * 0.035 + wave);
+    for (let i = 0; i <= 10; i += 1) {
+      const x = (i / 10) * width;
+      const wave = Math.sin(i * 1.55 + this.scroll * 0.32) * height * 0.024;
+      ctx.lineTo(x + farCurve * width * 0.025, horizonY - height * 0.034 + wave);
     }
     ctx.lineTo(width, horizonY + height * 0.1);
     ctx.lineTo(0, horizonY + height * 0.1);
@@ -283,62 +322,124 @@ export class CarRideGame {
   }
 
   roadGeometry(width, height, horizonY) {
-    const horizonCenter = width * 0.5 + this.roadOffset * width * 0.035;
-    const bottomCenter = width * 0.5 - this.roadOffset * width * 0.09;
     return {
+      width,
       horizonY,
-      bottomY: height * 1.02,
-      horizonCenter,
-      bottomCenter,
-      horizonHalf: width * 0.055,
-      bottomHalf: width * 0.49
+      bottomY: height * 1.03,
+      horizonHalf: width * 0.05,
+      bottomHalf: width * 0.5
     };
   }
 
   roadEdgesAt(geometry, y) {
     const progress = clamp((y - geometry.horizonY) / (geometry.bottomY - geometry.horizonY));
-    const curved = progress * progress;
-    const center = lerp(geometry.horizonCenter, geometry.bottomCenter, curved);
-    const half = lerp(geometry.horizonHalf, geometry.bottomHalf, curved);
-    return { left: center - half, right: center + half, center, progress };
+    const perspective = progress * progress;
+    const previewMs = (1 - progress) ** 1.18 * ROAD_PREVIEW_MS;
+    const routeCurve = this.curveAt(this.elapsedMs + previewMs);
+    const curveShape = (1 - progress) * (0.78 + Math.sin(progress * Math.PI) * 0.34);
+    const curveShift = routeCurve * geometry.width * 0.31 * curveShape;
+    const cameraShift = this.cameraOffset * geometry.width
+      * lerp(0.035, -0.125, perspective);
+    const center = geometry.width * 0.5 + curveShift + cameraShift;
+    const half = lerp(geometry.horizonHalf, geometry.bottomHalf, perspective);
+    return { left: center - half, right: center + half, center, progress, routeCurve };
   }
 
   drawRoad(width, height, horizonY, roadColor, edgeColor, accentColor) {
     const ctx = this.ctx;
     const geometry = this.roadGeometry(width, height, horizonY);
+    const samples = [];
+    const sampleCount = 36;
+
+    for (let index = 0; index <= sampleCount; index += 1) {
+      const progress = index / sampleCount;
+      const y = lerp(geometry.horizonY, geometry.bottomY, progress);
+      samples.push({ y, ...this.roadEdgesAt(geometry, y) });
+    }
+
     ctx.fillStyle = roadColor;
     ctx.beginPath();
-    ctx.moveTo(geometry.horizonCenter - geometry.horizonHalf, geometry.horizonY);
-    ctx.lineTo(geometry.horizonCenter + geometry.horizonHalf, geometry.horizonY);
-    ctx.lineTo(geometry.bottomCenter + geometry.bottomHalf, geometry.bottomY);
-    ctx.lineTo(geometry.bottomCenter - geometry.bottomHalf, geometry.bottomY);
+    ctx.moveTo(samples[0].left, samples[0].y);
+    for (let index = 1; index < samples.length; index += 1) {
+      ctx.lineTo(samples[index].left, samples[index].y);
+    }
+    for (let index = samples.length - 1; index >= 0; index -= 1) {
+      ctx.lineTo(samples[index].right, samples[index].y);
+    }
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = edgeColor;
     ctx.lineWidth = Math.max(5, width * 0.008);
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(geometry.horizonCenter - geometry.horizonHalf, geometry.horizonY);
-    ctx.lineTo(geometry.bottomCenter - geometry.bottomHalf, geometry.bottomY);
-    ctx.moveTo(geometry.horizonCenter + geometry.horizonHalf, geometry.horizonY);
-    ctx.lineTo(geometry.bottomCenter + geometry.bottomHalf, geometry.bottomY);
+    samples.forEach((sample, index) => {
+      if (index === 0) ctx.moveTo(sample.left, sample.y);
+      else ctx.lineTo(sample.left, sample.y);
+    });
+    samples.forEach((sample, index) => {
+      if (index === 0) ctx.moveTo(sample.right, sample.y);
+      else ctx.lineTo(sample.right, sample.y);
+    });
     ctx.stroke();
 
-    for (let i = 0; i < 14; i += 1) {
-      const phase = (i / 14 + this.scroll) % 1;
+    for (let index = 0; index < 16; index += 1) {
+      const phase = (index / 16 + this.scroll) % 1;
       const start = phase * phase;
-      const end = clamp(start + 0.045 + phase * 0.055);
+      const end = clamp(start + 0.038 + phase * 0.06);
       const y1 = lerp(geometry.horizonY, geometry.bottomY, start);
       const y2 = lerp(geometry.horizonY, geometry.bottomY, end);
       const p1 = this.roadEdgesAt(geometry, y1);
       const p2 = this.roadEdgesAt(geometry, y2);
-      ctx.strokeStyle = i % 2 ? '#ffffff' : accentColor;
+      ctx.strokeStyle = index % 2 ? '#ffffff' : accentColor;
       ctx.lineWidth = Math.max(2, lerp(2, width * 0.012, end));
       ctx.beginPath();
       ctx.moveTo(p1.center, y1);
-      ctx.lineTo(p2.center, y2);
+      ctx.quadraticCurveTo(
+        (p1.center + p2.center) / 2,
+        (y1 + y2) / 2,
+        p2.center,
+        y2
+      );
       ctx.stroke();
     }
+  }
+
+  drawCurveChevrons(width, height, horizonY, accentColor) {
+    const ctx = this.ctx;
+    const geometry = this.roadGeometry(width, height, horizonY);
+    const farCurve = this.curveAt(this.elapsedMs + ROAD_PREVIEW_MS * 0.72);
+    if (Math.abs(farCurve) < 0.34 || !this.ready) return;
+
+    const side = farCurve < 0 ? 1 : -1;
+    ctx.save();
+    for (let index = 0; index < 5; index += 1) {
+      const progress = 0.16 + index * 0.115;
+      const y = lerp(geometry.horizonY, height * 0.76, progress);
+      const edge = this.roadEdgesAt(geometry, y);
+      const scale = lerp(0.42, 1.05, progress);
+      const x = side < 0
+        ? edge.left - width * (0.035 + progress * 0.04)
+        : edge.right + width * (0.035 + progress * 0.04);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = 'rgba(23, 30, 52, .82)';
+      ctx.beginPath();
+      ctx.roundRect(-26, -22, 52, 44, 9);
+      ctx.fill();
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(side * -9, -11);
+      ctx.lineTo(side * 9, 0);
+      ctx.lineTo(side * -9, 11);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   drawEnvironment(type, width, height, horizonY, alpha) {
@@ -348,13 +449,13 @@ export class CarRideGame {
     ctx.save();
     ctx.globalAlpha = alpha;
 
-    for (let i = 0; i < 16; i += 1) {
-      const depth = (i / 16 + this.scroll * 0.43) % 1;
+    for (let index = 0; index < 18; index += 1) {
+      const depth = (index / 18 + this.scroll * 0.43) % 1;
       const perspective = depth * depth;
       const y = lerp(horizonY + height * 0.01, height * 0.88, perspective);
       const edges = this.roadEdgesAt(geometry, y);
-      const side = i % 2 === 0 ? -1 : 1;
-      const seed = seeded(i + (type.length * 31));
+      const side = index % 2 === 0 ? -1 : 1;
+      const seed = seeded(index + (type.length * 31));
       const margin = lerp(width * 0.025, width * 0.17, perspective);
       const x = side < 0 ? edges.left - margin : edges.right + margin;
       const scale = lerp(0.2, 1.35, perspective) * (0.82 + seed * 0.34);
@@ -370,14 +471,19 @@ export class CarRideGame {
     ctx.scale(scale * side, scale);
 
     if (type === 'city') {
-      const width = 34 + seed * 24;
-      const height = 72 + seed * 70;
+      const buildingWidth = 34 + seed * 24;
+      const buildingHeight = 72 + seed * 70;
       ctx.fillStyle = seed > 0.5 ? '#7c8fa3' : '#65778c';
-      ctx.fillRect(-width / 2, -height, width, height);
+      ctx.fillRect(-buildingWidth / 2, -buildingHeight, buildingWidth, buildingHeight);
       ctx.fillStyle = '#ffe484';
       for (let row = 0; row < 3; row += 1) {
         for (let column = 0; column < 2; column += 1) {
-          ctx.fillRect(-width * 0.31 + column * width * 0.36, -height + 16 + row * 19, 7, 9);
+          ctx.fillRect(
+            -buildingWidth * 0.31 + column * buildingWidth * 0.36,
+            -buildingHeight + 16 + row * 19,
+            7,
+            9
+          );
         }
       }
     } else if (type === 'forest') {
