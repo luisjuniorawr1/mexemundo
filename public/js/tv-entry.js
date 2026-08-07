@@ -26,8 +26,8 @@ function installHandNavigation() {
     #calibrationPanel,
     #gameMenuPanel,
     #resultPanel {
-      width: min(760px, 72vw);
-      max-width: 760px;
+      width: min(900px, 78vw);
+      max-width: 900px;
       margin-inline: auto;
     }
     .preparation-actions {
@@ -69,8 +69,8 @@ function installHandNavigation() {
     .game-menu-lead { margin: 0 0 24px; }
     .game-menu-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 18px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
     }
     .game-menu-card {
       min-height: 230px;
@@ -86,6 +86,10 @@ function installHandNavigation() {
       box-shadow: 0 18px 38px rgba(50,30,120,.14);
       cursor: default;
     }
+    .game-menu-card.story-card {
+      background: linear-gradient(160deg, #fffdf2, #e9f5df);
+      border-color: rgba(70,126,74,.18);
+    }
     .game-menu-card.hand-hover {
       border-color: #ffcf4a;
       outline: 8px solid rgba(255,207,74,.35) !important;
@@ -97,8 +101,8 @@ function installHandNavigation() {
       box-shadow: none;
     }
     .game-menu-icon { font-size: 4.5rem; line-height: 1; }
-    .game-menu-card strong { font-size: 1.35rem; }
-    .game-menu-card small { color: #6b6380; font-weight: 800; }
+    .game-menu-card strong { font-size: 1.35rem; text-align: center; }
+    .game-menu-card small { color: #6b6380; font-weight: 800; text-align: center; }
     .game-menu-tip {
       margin: 22px 0 0;
       color: #5a4f73;
@@ -109,6 +113,10 @@ function installHandNavigation() {
       opacity: 0;
       pointer-events: none;
     }
+    @media (max-width: 980px) {
+      .game-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .story-card { grid-column: 1 / -1; }
+    }
     @media (max-width: 760px) {
       #calibrationPanel,
       #gameMenuPanel,
@@ -118,6 +126,7 @@ function installHandNavigation() {
       .preparation-actions .badge,
       .fullscreen-action { width: min(100%, 300px); }
       .game-menu-grid { grid-template-columns: 1fr; }
+      .story-card { grid-column: auto; }
       .game-menu-card { min-height: 120px; grid-template-columns: auto 1fr; text-align: left; }
       .game-menu-icon { font-size: 3rem; grid-row: span 2; }
     }
@@ -132,12 +141,17 @@ function createGameMenu() {
   const menu = document.createElement('section');
   menu.id = 'gameMenuPanel';
   menu.className = 'modal-card hidden';
-  menu.setAttribute('aria-label', 'Menu de jogos');
+  menu.setAttribute('aria-label', 'Menu de jogos e histórias');
   menu.innerHTML = `
-    <span class="eyebrow">ESCOLHA UM JOGO</span>
-    <h2>O que vamos jogar?</h2>
-    <p class="game-menu-lead">Mova a mão direita até um jogo e mantenha-a parada para selecionar.</p>
+    <span class="eyebrow">ESCOLHA UMA EXPERIÊNCIA</span>
+    <h2>O que vamos fazer?</h2>
+    <p class="game-menu-lead">Mova a mão direita até uma opção e mantenha-a parada para selecionar.</p>
     <div class="game-menu-grid">
+      <button id="forestStoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
+        <span class="game-menu-icon">🌲</span>
+        <strong>O Filhote Perdido</strong>
+        <small>História interativa na floresta</small>
+      </button>
       <button id="balloonGameCard" class="game-menu-card" type="button" data-hand-target="true">
         <span class="game-menu-icon">🎈</span>
         <strong>Estoura-Balões</strong>
@@ -149,17 +163,25 @@ function createGameMenu() {
         <small>Gire um volante com as duas mãos</small>
       </button>
     </div>
-    <p class="game-menu-tip">A mão direita é o cursor. As opções ficam na área central para facilitar o alcance.</p>
+    <p class="game-menu-tip">A mão direita é o cursor. O celular continua parado durante todas as experiências.</p>
   `;
   gameShell.append(menu);
 
   const selectGame = (game) => {
+    if (game === 'forest-story') {
+      gameSelected = true;
+      const room = document.querySelector('#roomCode')?.textContent?.trim() || '';
+      location.href = `/story.html?sala=${encodeURIComponent(room)}`;
+      return;
+    }
+
     window.mexemundoSelectedGame = game;
     gameSelected = true;
     menu.classList.add('hidden');
     document.querySelector('#countdownPanel')?.classList.remove('hidden');
   };
 
+  menu.querySelector('#forestStoryCard').addEventListener('click', () => selectGame('forest-story'));
   menu.querySelector('#balloonGameCard').addEventListener('click', () => selectGame('balloons'));
   menu.querySelector('#carRideGameCard').addEventListener('click', () => selectGame('car-ride'));
 }
@@ -222,9 +244,9 @@ function installReturnToGameMenu() {
   const menu = document.querySelector('#gameMenuPanel');
   if (!returnButton || !restartButton || !resultPanel || !countdownPanel || !menu) return;
 
-  returnButton.textContent = 'Escolher outro jogo';
+  returnButton.textContent = 'Escolher outra experiência';
   returnButton.setAttribute('href', '#gameMenuPanel');
-  returnButton.setAttribute('aria-label', 'Escolher outro jogo sem desconectar o celular');
+  returnButton.setAttribute('aria-label', 'Escolher outra experiência sem desconectar o celular');
 
   returnButton.addEventListener('click', (event) => {
     event.preventDefault();

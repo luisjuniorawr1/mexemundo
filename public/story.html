@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#163f2e" />
+  <title>MexeMundo — O Filhote Perdido</title>
+  <link rel="stylesheet" href="/story.css" />
+</head>
+<body>
+  <main class="story-shell">
+    <canvas id="storyCanvas" aria-label="História O Filhote Perdido"></canvas>
+
+    <header class="story-topbar">
+      <div>
+        <span class="story-kicker">MEXEMUNDO • HISTÓRIA</span>
+        <strong>O Filhote Perdido</strong>
+      </div>
+      <div id="connectionBadge" class="story-badge waiting">Conectando…</div>
+    </header>
+
+    <section id="messageCard" class="message-card">
+      <span id="messageEyebrow">PREPARANDO A AVENTURA</span>
+      <h1 id="messageTitle">Fique de frente para a câmera</h1>
+      <p id="messageText">Mantenha o celular parado e deixe suas duas mãos aparecerem.</p>
+      <div class="meter"><span id="messageProgress"></span></div>
+    </section>
+
+    <div id="objective" class="objective hidden"></div>
+    <div id="storyProgress" class="story-progress" aria-label="Progresso da história"></div>
+
+    <section id="endingCard" class="ending-card hidden">
+      <div class="ending-stars">✦ ✦ ✦</div>
+      <span>MISSÃO CONCLUÍDA</span>
+      <h2>O filhote voltou para casa!</h2>
+      <p>Você seguiu as pistas, ajudou os animais e encontrou o pequeno explorador.</p>
+      <button id="restartButton" type="button">Viver a aventura novamente</button>
+      <small>Ou levante as duas mãos por 2 segundos.</small>
+    </section>
+
+    <div class="safe-hint">Deixe um espaço livre ao redor de você 👣</div>
+  </main>
+  <script type="module" src="/js/story.js"></script>
+</body>
+</html>

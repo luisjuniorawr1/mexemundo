@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/tv-entry.js && node --check public/js/right-hand-menu.js && node --check public/js/tv.js && node --check public/js/phone.js"
+    "check": "node --check server.js && node --check public/js/realtime.js && node --check public/js/tv-entry.js && node --check public/js/right-hand-menu.js && node --check public/js/tv.js && node --check public/js/phone.js && node --check public/js/story.js"
   },
   "engines": {
     "node": ">=18"
