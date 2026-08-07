@@ -106,6 +106,23 @@ function broadcast(room, message, except = null) {
   }
 }
 
+function broadcastToOppositeRole(room, sender, message) {
+  const members = rooms.get(room);
+  if (!members) return;
+
+  const serialized = JSON.stringify(message);
+  for (const client of members) {
+    if (
+      client !== sender
+      && client.role
+      && client.role !== sender.role
+      && client.readyState === WebSocket.OPEN
+    ) {
+      client.send(serialized);
+    }
+  }
+}
+
 function broadcastRoomStatus(room) {
   if (!room) return;
   broadcast(room, { type: 'room-status', payload: roomStatus(room) });
@@ -126,8 +143,36 @@ function removeFromRoom(client) {
   broadcastRoomStatus(oldRoom);
 }
 
+function removeExistingRole(room, role, incomingClient) {
+  const members = rooms.get(room);
+  if (!members) return;
+
+  for (const existing of [...members]) {
+    if (existing === incomingClient || existing.role !== role) continue;
+
+    members.delete(existing);
+    existing.room = '';
+    existing.role = '';
+
+    sendJson(existing, {
+      type: 'session-replaced',
+      payload: { role }
+    });
+
+    try {
+      existing.close(4001, 'Sessão substituída por uma nova conexão.');
+    } catch {
+      // A conexão antiga pode já estar sendo encerrada pelo navegador.
+    }
+  }
+
+  if (members.size === 0) rooms.delete(room);
+}
+
 function addToRoom(client, room, role) {
   removeFromRoom(client);
+  removeExistingRole(room, role, client);
+
   client.room = room;
   client.role = role;
 
@@ -171,7 +216,7 @@ function handleMessage(client, rawMessage) {
 
   if (type === 'rtc-signal') {
     if (!client.room) return;
-    broadcast(client.room, { type: 'rtc-signal', payload }, client);
+    broadcastToOppositeRole(client.room, client, { type: 'rtc-signal', payload });
     return;
   }
 
