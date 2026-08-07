@@ -377,7 +377,7 @@ export class CarRideGame {
 
   roadMetricsAt(geometry, y) {
     const progress = clamp((y - geometry.horizonY) / (geometry.bottomY - geometry.horizonY));
-    const perspective = progress * progress;
+    const perspective = progress;
     const center = geometry.width * 0.5;
     const half = lerp(geometry.horizonHalf, geometry.bottomHalf, perspective);
     return { left: center - half, right: center + half, center, half, progress, perspective };
@@ -428,6 +428,22 @@ export class CarRideGame {
 
   drawTraffic(width, height, horizonY) {
     const geometry = this.roadGeometry(width, height, horizonY);
+    const playerY = height * 0.835;
+    const playerScale = clamp(Math.min(width, height) / 720, 0.72, 1.28);
+    const trafficMatchScale = playerScale * 1.6;
+    const trafficStartY = horizonY + height * 0.012;
+    const trafficEndY = height * 0.93;
+    const playerVisual = clamp((playerY - trafficStartY) / (trafficEndY - trafficStartY), 0.01, 1);
+    const trafficScaleAt = (visual) => {
+      if (visual <= playerVisual) {
+        return lerp(0.1, trafficMatchScale, clamp(visual / playerVisual));
+      }
+      return lerp(
+        trafficMatchScale,
+        trafficMatchScale * 1.12,
+        clamp((visual - playerVisual) / (1 - playerVisual))
+      );
+    };
     const active = TRAFFIC
       .map((item) => ({
         item,
@@ -443,8 +459,8 @@ export class CarRideGame {
     for (const { item, progress, overtaken } of active) {
       const baseVisual = ease(clamp(progress));
       const passStartVisual = ease(0.86);
-      let y = lerp(horizonY + height * 0.012, height * 0.93, baseVisual);
-      let scale = lerp(0.1, 1.05, baseVisual);
+      let y = lerp(trafficStartY, trafficEndY, baseVisual);
+      let scale = trafficScaleAt(baseVisual);
       let alpha = progress > 0.97 ? clamp((1.08 - progress) / 0.11) : 1;
 
       if (overtaken && progress > 0.86) {
@@ -452,13 +468,13 @@ export class CarRideGame {
           (progress - 0.86) / (OVERTAKEN_EXIT_PROGRESS - 0.86)
         );
         const passStartY = lerp(
-          horizonY + height * 0.012,
-          height * 0.93,
+          trafficStartY,
+          trafficEndY,
           passStartVisual
         );
-        const passStartScale = lerp(0.1, 1.05, passStartVisual);
+        const passStartScale = trafficScaleAt(passStartVisual);
         y = lerp(passStartY, height * 1.18, afterPass);
-        scale = lerp(passStartScale, 1.18, afterPass);
+        scale = lerp(passStartScale, trafficMatchScale * 1.24, afterPass);
         alpha = 1;
       }
 
