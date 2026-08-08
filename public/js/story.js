@@ -282,9 +282,16 @@ function updateStory(now, dt) {
   if (scene === 'duck') {
     if (!requireShoulders()) return;
     hideMessage();
-    const low = shoulderMidY() > neutralShoulderY + 0.085;
-    if (low && !duckWasLow) { duckCount += 1; duckWasLow = true; tone(560 + duckCount * 80); art.sparkle(canvas.width * 0.5, canvas.height * 0.56, 6); }
-    if (!low && shoulderMidY() < neutralShoulderY + 0.045) duckWasLow = false;
+    const cycle = (elapsed % 5000) / 5000;
+    const danger = cycle > 0.48 && cycle < 0.86;
+    const assist = clamp((elapsed - 18000) / 26000);
+    const lowThreshold = lerp(0.055, 0.032, assist);
+    const low = shoulderMidY() > neutralShoulderY + lowThreshold;
+    if (danger && low && !duckWasLow) {
+      duckWasLow = true; duckCount += 1; tone(560 + duckCount * 80);
+      art.sparkle(canvas.width * 0.5, canvas.height * 0.56, 6);
+    }
+    if (!danger) duckWasLow = false;
     setObjective(`Abaixe-se quando o galho chegar • ${Math.min(duckCount, 2)}/2`);
     if (duckCount >= 2) { sceneTone(); nextScene('dusk-walk'); }
     return;
