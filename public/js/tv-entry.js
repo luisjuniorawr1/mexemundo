@@ -24,12 +24,13 @@ window.requestAnimationFrame = (callback) => {
   if (!storyFrameCallback && storyActive) {
     try {
       const source = Function.prototype.toString.call(callback);
-      if (source.includes('updateSetup') && source.includes('drawScene') && source.includes('updateParticles')) {
+      if (
+        source.includes('SPACE_STORY_FRAME')
+        || (source.includes('updateSetup') && source.includes('drawScene') && source.includes('updateParticles'))
+      ) {
         storyFrameCallback = callback;
       }
-    } catch {
-      // Se o navegador não permitir inspecionar a função, a história apenas continua ativa.
-    }
+    } catch {}
   }
 
   if (callback === storyFrameCallback && !storyActive) return 0;
@@ -87,9 +88,7 @@ function installHandNavigation() {
     }
     #gameMenuPanel { padding: 34px; }
     #resultPanel .button,
-    #resultPanel [data-hand-target] {
-      min-width: 180px;
-    }
+    #resultPanel [data-hand-target] { min-width: 180px; }
     #resultPanel .actions,
     #resultPanel .button-row {
       justify-content: center;
@@ -119,8 +118,8 @@ function installHandNavigation() {
       cursor: default;
     }
     .game-menu-card.story-card {
-      background: linear-gradient(160deg, #fffdf2, #e9f5df);
-      border-color: rgba(70,126,74,.18);
+      background: linear-gradient(160deg, #f8fbff, #e8e8ff 55%, #f4e6ff);
+      border-color: rgba(78,78,200,.19);
     }
     .game-menu-card.hand-hover {
       border-color: #ffcf4a;
@@ -152,7 +151,7 @@ function installHandNavigation() {
     }
     body.story-active #handInterfaceLayer { display: none; }
     body.story-active.story-ending #handInterfaceLayer { display: block; }
-    #storyBackToMenu { background: #334c40; }
+    #storyBackToMenu { background: #334c69; }
     @media (max-width: 980px) {
       .game-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .story-card { grid-column: 1 / -1; }
@@ -175,12 +174,20 @@ function installHandNavigation() {
 }
 
 function ensureStoryStyles() {
-  if (document.querySelector('#mexemundoStoryStyles')) return;
-  const link = document.createElement('link');
-  link.id = 'mexemundoStoryStyles';
-  link.rel = 'stylesheet';
-  link.href = '/story.css';
-  document.head.append(link);
+  if (!document.querySelector('#mexemundoStoryStyles')) {
+    const base = document.createElement('link');
+    base.id = 'mexemundoStoryStyles';
+    base.rel = 'stylesheet';
+    base.href = '/story.css';
+    document.head.append(base);
+  }
+  if (!document.querySelector('#mexemundoSpaceStoryStyles')) {
+    const space = document.createElement('link');
+    space.id = 'mexemundoSpaceStoryStyles';
+    space.rel = 'stylesheet';
+    space.href = '/space-story.css';
+    document.head.append(space);
+  }
 }
 
 function createEmbeddedStory() {
@@ -193,39 +200,39 @@ function createEmbeddedStory() {
   const story = document.createElement('section');
   story.id = 'storyExperience';
   story.className = 'story-shell embedded-story-shell hidden';
-  story.setAttribute('aria-label', 'História O Filhote Perdido');
+  story.setAttribute('aria-label', 'História Missão: Estrela Perdida');
   story.innerHTML = `
-    <canvas id="storyCanvas" aria-label="História O Filhote Perdido"></canvas>
+    <canvas id="storyCanvas" aria-label="Missão: Estrela Perdida"></canvas>
 
     <header class="story-topbar">
       <div>
         <span class="story-kicker">MEXEMUNDO • HISTÓRIA</span>
-        <strong>O Filhote Perdido</strong>
+        <strong>Missão: Estrela Perdida</strong>
       </div>
       <div id="storyConnectionBadge" class="story-badge waiting">Celular conectado</div>
     </header>
 
     <section id="messageCard" class="message-card">
-      <span id="messageEyebrow">PREPARANDO A AVENTURA</span>
-      <h1 id="messageTitle">Fique de frente para a câmera</h1>
-      <p id="messageText">Mantenha o celular parado e deixe suas duas mãos aparecerem.</p>
+      <span id="messageEyebrow">PREPARANDO A MISSÃO</span>
+      <h1 id="messageTitle">Mostre suas mãos</h1>
+      <p id="messageText">Cada mão funciona separadamente para tocar os alvos.</p>
       <div class="meter"><span id="messageProgress"></span></div>
     </section>
 
     <div id="objective" class="objective hidden"></div>
-    <div id="storyProgress" class="story-progress" aria-label="Progresso da história"></div>
+    <div id="storyProgress" class="story-progress" aria-label="Progresso da missão"></div>
 
     <section id="endingCard" class="ending-card hidden">
       <div class="ending-stars">✦ ✦ ✦</div>
       <span>MISSÃO CONCLUÍDA</span>
-      <h2>O filhote voltou para casa!</h2>
-      <p>Você seguiu as pistas, ajudou os animais e encontrou o pequeno explorador.</p>
-      <button id="storyRestartButton" type="button">Viver a aventura novamente</button>
+      <h2>A estrela voltou para casa!</h2>
+      <p>Você atravessou o espaço e completou a constelação.</p>
+      <button id="storyRestartButton" type="button" data-hand-target="true">Jogar novamente</button>
       <button id="storyBackToMenu" type="button" data-hand-target="true">Voltar ao MexeMundo</button>
-      <small>Você também pode levantar as duas mãos para repetir a aventura.</small>
+      <small>Use a mão para escolher.</small>
     </section>
 
-    <div class="safe-hint">Deixe um espaço livre ao redor de você 👣</div>
+    <div class="safe-hint">Mova apenas as mãos e mantenha espaço livre ao redor 👋</div>
   `;
   gameShell.append(story);
 
@@ -314,7 +321,7 @@ async function loadEmbeddedStory(story) {
   embeddingStoryClient = true;
   history.replaceState(history.state, '', `/tv?sala=${encodeURIComponent(room)}`);
   try {
-    await import('./story.js');
+    await import('./space-story.js');
     storyLoaded = true;
   } finally {
     embeddingStoryClient = false;
@@ -350,7 +357,7 @@ async function openEmbeddedStory() {
     storyActive = false;
     document.body.classList.remove('story-active', 'story-ending');
     menu?.classList.remove('hidden');
-    alert('Não foi possível abrir a história. Tente novamente.');
+    alert('Não foi possível abrir a missão. Tente novamente.');
   }
 }
 
@@ -381,15 +388,15 @@ function createGameMenu() {
     <h2>O que vamos fazer?</h2>
     <p class="game-menu-lead">Mova a mão direita até uma opção e mantenha-a parada para selecionar.</p>
     <div class="game-menu-grid">
-      <button id="forestStoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
-        <span class="game-menu-icon">🌲</span>
-        <strong>O Filhote Perdido</strong>
-        <small>História interativa na floresta</small>
+      <button id="spaceStoryCard" class="game-menu-card story-card" type="button" data-hand-target="true">
+        <span class="game-menu-icon">🚀</span>
+        <strong>Missão: Estrela Perdida</strong>
+        <small>Uma aventura de toques pelo espaço</small>
       </button>
       <button id="balloonGameCard" class="game-menu-card" type="button" data-hand-target="true">
         <span class="game-menu-icon">🎈</span>
         <strong>Estoura-Balões</strong>
-        <small>Use as duas mãos para estourar</small>
+        <small>Use as mãos para estourar</small>
       </button>
       <button id="carRideGameCard" class="game-menu-card" type="button" data-hand-target="true">
         <span class="game-menu-icon">🚗</span>
@@ -397,12 +404,12 @@ function createGameMenu() {
         <small>Gire um volante com as duas mãos</small>
       </button>
     </div>
-    <p class="game-menu-tip">A mão direita é o cursor. O celular continua parado durante todas as experiências.</p>
+    <p class="game-menu-tip">O celular continua parado durante todas as experiências.</p>
   `;
   gameShell.append(menu);
 
   const selectGame = (game) => {
-    if (game === 'forest-story') {
+    if (game === 'space-story') {
       openEmbeddedStory();
       return;
     }
@@ -413,7 +420,7 @@ function createGameMenu() {
     document.querySelector('#countdownPanel')?.classList.remove('hidden');
   };
 
-  menu.querySelector('#forestStoryCard').addEventListener('click', () => selectGame('forest-story'));
+  menu.querySelector('#spaceStoryCard').addEventListener('click', () => selectGame('space-story'));
   menu.querySelector('#balloonGameCard').addEventListener('click', () => selectGame('balloons'));
   menu.querySelector('#carRideGameCard').addEventListener('click', () => selectGame('car-ride'));
 }
