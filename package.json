@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "assets:farol": "node scripts/install-lighthouse-assets.mjs",
-    "check": "node --check server.js && node --check scripts/install-lighthouse-assets.mjs && node --check public/js/realtime.js && node --check public/js/tv-entry.js && node --check public/js/right-hand-menu.js && node --check public/js/tv.js && node --check public/js/phone.js && node --check public/js/story.js && node --check public/js/space-story.js && node --check public/js/lighthouse-entry.js && node --check public/js/lighthouse-story.js"
+    "assets:missao-estrela": "node scripts/install-space-story-assets.mjs",
+    "check": "node --check server.js && node --check scripts/install-lighthouse-assets.mjs && node --check scripts/install-space-story-assets.mjs && node --check public/js/realtime.js && node --check public/js/tv-entry.js && node --check public/js/right-hand-menu.js && node --check public/js/tv.js && node --check public/js/phone.js && node --check public/js/story.js && node --check public/js/space-story.js && node --check public/js/lighthouse-entry.js && node --check public/js/lighthouse-story.js"
   },
   "engines": {
     "node": ">=18"
