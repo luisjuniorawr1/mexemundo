@@ -4,6 +4,7 @@ import { createLighthouseStory } from './lighthouse-story.js';
 let primaryRealtimeClient = null;
 let storyInstance = null;
 let storyOpen = false;
+let handFeedbackWired = false;
 
 const baseOn = RealtimeClient.prototype.on;
 RealtimeClient.prototype.on = function captureLighthouseRealtimeClient(type, callback) {
@@ -33,6 +34,8 @@ function createStoryShell() {
   shell.setAttribute('aria-label', 'História O Farol das Estrelas');
   shell.innerHTML = `
     <canvas class="lighthouse-canvas" aria-label="O Farol das Estrelas"></canvas>
+    <div class="lighthouse-hand lighthouse-hand-left" aria-hidden="true"></div>
+    <div class="lighthouse-hand lighthouse-hand-right" aria-hidden="true"></div>
 
     <header class="lighthouse-topbar">
       <div>
@@ -63,6 +66,28 @@ function createStoryShell() {
   return shell;
 }
 
+function wireHandFeedback(shell) {
+  if (handFeedbackWired || !primaryRealtimeClient) return;
+  handFeedbackWired = true;
+  const cursors = {
+    left: shell.querySelector('.lighthouse-hand-left'),
+    right: shell.querySelector('.lighthouse-hand-right')
+  };
+
+  primaryRealtimeClient.on('pose', (pose) => {
+    const ending = document.body.classList.contains('story-ending');
+    for (const name of ['left', 'right']) {
+      const cursor = cursors[name];
+      const point = pose?.[name];
+      const visible = storyOpen && !ending && pose?.detected && point?.visible;
+      cursor?.classList.toggle('visible', Boolean(visible));
+      if (!visible || !cursor) continue;
+      cursor.style.left = `${Math.max(0, Math.min(1, point.x)) * 100}%`;
+      cursor.style.top = `${Math.max(0, Math.min(1, point.y)) * 100}%`;
+    }
+  });
+}
+
 function closeStory() {
   storyOpen = false;
   storyInstance?.stop();
@@ -87,6 +112,7 @@ function openStory() {
 
   const shell = createStoryShell();
   if (!shell) return;
+  wireHandFeedback(shell);
 
   document.querySelector('#gameMenuPanel')?.classList.add('hidden');
   document.querySelector('#countdownPanel')?.classList.add('hidden');
