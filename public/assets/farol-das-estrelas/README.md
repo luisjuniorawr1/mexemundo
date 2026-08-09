@@ -36,6 +36,12 @@ O instalador `scripts/install-lighthouse-assets.mjs`:
 
 Teste realizado com o pacote recebido: **176/176 arquivos aprovados antes e depois da cópia**.
 
+## Transporte e integridade
+
+Base64, quando usado apenas como codificação de transporte, também preserva os bytes e não reduz a qualidade de uma imagem. Porém, o kit completo possui cerca de **125,01 MiB**, e o conector GitHub disponível nesta sessão não aceita um arquivo binário local/ZIP como parâmetro de upload. Transferir o pacote inteiro por payload textual seria impraticável e desnecessariamente pesado.
+
+Por isso, o caminho aprovado para os PNGs finais é transferência binária normal seguida da validação com `docs/SHA256SUMS.txt`. O objetivo é garantir que o arquivo presente no repositório seja exatamente o mesmo arquivo recebido no kit.
+
 ## Organização do kit
 
 - `backgrounds/` — 9 cenários HD;
