@@ -1,20 +1,23 @@
 name: Install Lighthouse Assets
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/farol-das-estrelas
-    paths:
-      - .github/workflows/install-lighthouse-assets.yml
+      - main
+    types:
+      - synchronize
+      - opened
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   install-assets:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
+      - name: Checkout Farol branch
         uses: actions/checkout@v4
         with:
           ref: agent/farol-das-estrelas
