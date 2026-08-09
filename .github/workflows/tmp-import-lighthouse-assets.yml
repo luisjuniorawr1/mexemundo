@@ -21,30 +21,68 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download exact original kit
+      - name: Download and validate exact original kit
         shell: bash
         run: |
+          set -euo pipefail
+          ZIP='/tmp/farol-das-estrelas-hd.zip'
+          FILE_ID='1D1NpMzJIOSBAs5QChQbiUze81BVHhWRz'
+          EXPECTED_SIZE='130674133'
+          EXPECTED_SHA='0ab12decb4bd85ff1cb5aae74c0031ebcb37a4dbef1383815171c4d636c1a12a'
+
+          rm -f "$ZIP"
           python -m pip install --disable-pip-version-check --quiet gdown
-          gdown --fuzzy 'https://drive.google.com/file/d/1D1NpMzJIOSBAs5QChQbiUze81BVHhWRz/view?usp=sharing' -O /tmp/farol-das-estrelas-hd.zip
-          test "$(stat -c%s /tmp/farol-das-estrelas-hd.zip)" = "130674133"
-          echo '0ab12decb4bd85ff1cb5aae74c0031ebcb37a4dbef1383815171c4d636c1a12a  /tmp/farol-das-estrelas-hd.zip' | sha256sum -c -
+
+          echo 'Tentativa 1: gdown'
+          if ! gdown --fuzzy "https://drive.google.com/file/d/${FILE_ID}/view?usp=sharing" -O "$ZIP"; then
+            echo 'gdown falhou; tentando download direto do Google Drive.'
+            rm -f "$ZIP"
+          fi
+
+          if [ ! -f "$ZIP" ] || [ "$(stat -c%s "$ZIP" 2>/dev/null || echo 0)" != "$EXPECTED_SIZE" ]; then
+            echo 'Tentativa 2: drive.usercontent.google.com'
+            rm -f "$ZIP"
+            curl --fail --location --retry 3 --retry-all-errors \
+              "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t" \
+              --output "$ZIP"
+          fi
+
+          ACTUAL_SIZE="$(stat -c%s "$ZIP")"
+          ACTUAL_SHA="$(sha256sum "$ZIP" | awk '{print $1}')"
+          echo "Tamanho baixado: ${ACTUAL_SIZE} bytes"
+          echo "SHA-256 baixado: ${ACTUAL_SHA}"
+          file "$ZIP" || true
+          ls -lh "$ZIP"
+
+          test "$ACTUAL_SIZE" = "$EXPECTED_SIZE"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
 
       - name: Install and verify all 176 PNGs
         shell: bash
         run: |
+          set -euo pipefail
           npm run assets:farol -- /tmp/farol-das-estrelas-hd.zip
           cd public/assets/farol-das-estrelas
           sha256sum -c docs/SHA256SUMS.txt
 
+      - name: Show staged asset summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          find public/assets/farol-das-estrelas -type f -name '*.png' | wc -l
+          du -sh public/assets/farol-das-estrelas
+          git status --short
+
       - name: Commit original assets to Farol branch
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add public/assets/farol-das-estrelas
           if git diff --cached --quiet; then
             echo 'No asset changes to commit.'
-          else
-            git commit -m 'Adiciona assets originais do Farol das Estrelas'
-            git push origin HEAD:agent/farol-das-estrelas
+            exit 0
           fi
+          git commit -m 'Adiciona assets originais do Farol das Estrelas'
+          git push origin HEAD:agent/farol-das-estrelas
