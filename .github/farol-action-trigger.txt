@@ -1,0 +1,1 @@
+trigger: import lighthouse assets from validated public Drive ZIP
