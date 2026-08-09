@@ -1,5 +1,6 @@
 name: Install Lighthouse Assets
 
+# Trigger de sincronização para importar o kit visual original.
 on:
   pull_request:
     branches:
