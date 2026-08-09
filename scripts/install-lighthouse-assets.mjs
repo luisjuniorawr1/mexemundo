@@ -3,8 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const targetRoot = join(repoRoot, 'public', 'assets', 'farol-das-estrelas');
 const sumsPath = join(targetRoot, 'docs', 'SHA256SUMS.txt');
 const input = process.argv[2];
