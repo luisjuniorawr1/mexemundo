@@ -1,9 +1,14 @@
 {
   "story": "O Farol das Estrelas",
-  "version": 1,
-  "resolution": {
-    "backgrounds": "3840x2160",
-    "isolatedAssets": "PNG transparente em alta resolução"
+  "version": 2,
+  "sourcePackage": "farol-das-estrelas-hd.zip",
+  "resolutionStandard": "HD 1920x1080",
+  "preserveOriginalBytes": true,
+  "qualityPolicy": {
+    "resize": false,
+    "recompress": false,
+    "convertFormat": false,
+    "isolatedAssets": "PNG RGBA com transparência original"
   },
   "paths": {
     "backgrounds": [
@@ -40,6 +45,8 @@
     ],
     "obstacles": [
       "obstacles/cloud_obstacle.png",
+      "obstacles/cloud_obstacle_02.png",
+      "obstacles/cloud_obstacle_03.png",
       "obstacles/wind_gust.png"
     ],
     "fx": [
@@ -74,6 +81,24 @@
       "screens/cover_star_lighthouse.png",
       "screens/story_complete.png",
       "screens/adventure_map.png"
-    ]
+    ],
+    "animations": {
+      "lume_idle_animation": { "frames": 12, "fps": 12, "loop": true, "frameSize": [512, 512] },
+      "lume_flying_animation": { "frames": 12, "fps": 12, "loop": true, "frameSize": [512, 512] },
+      "lume_glow_animation": { "frames": 12, "fps": 12, "loop": true, "frameSize": [512, 512] },
+      "star_fragment_idle_animation": { "frames": 12, "fps": 12, "loop": true, "frameSize": [512, 512] },
+      "star_collect_animation": { "frames": 12, "fps": 12, "loop": false, "frameSize": [512, 512] },
+      "crystal_activation_animation": { "frames": 12, "fps": 12, "loop": false, "frameSize": [512, 512] },
+      "star_restore_animation": { "frames": 16, "fps": 15, "loop": false, "frameSize": [512, 512] },
+      "magic_burst_animation": { "frames": 12, "fps": 12, "loop": false, "frameSize": [512, 512] },
+      "lighthouse_energy_animation": { "frames": 12, "fps": 12, "loop": false, "frameSize": [1920, 1080], "useIndividualFramesForGame": true }
+    }
+  },
+  "qa": {
+    "pngFilesChecked": 176,
+    "manifestEntries": 176,
+    "status": "passed",
+    "errors": 0,
+    "warnings": 0
   }
 }
