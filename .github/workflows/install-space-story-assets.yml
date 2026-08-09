@@ -1,0 +1,61 @@
+name: Import Space Story Assets
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/install-space-story-assets.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  import-assets:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download exact HD kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/missao-estrela-perdida-hd.zip"
+          python -m pip install --disable-pip-version-check --quiet gdown
+          gdown --fuzzy 'https://drive.google.com/file/d/1AW0dKBrHgDkZpGeIZAuIZ5u1K7QHYOlp/view?usp=sharing' -O "$ZIP"
+          echo "Downloaded bytes: $(stat -c%s "$ZIP")"
+          test "$(stat -c%s "$ZIP")" = "80029968"
+          echo '181e56952d0ae866825298b95b2e5bd360c617d8be3ee31b508a2b607484b3fa  '"$ZIP" | sha256sum -c -
+
+      - name: Install and verify 148 PNGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run assets:missao-estrela -- "$RUNNER_TEMP/missao-estrela-perdida-hd.zip"
+          COUNT="$(find public/assets/missao-estrela-perdida -type f -name '*.png' | wc -l | tr -d ' ')"
+          echo "Installed PNGs: $COUNT"
+          test "$COUNT" = "148"
+
+      - name: Commit assets to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/missao-estrela-perdida
+          if git diff --cached --quiet; then
+            echo 'No asset changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Adiciona assets HD originais da Missão Estrela Perdida'
+          git push origin HEAD:main
