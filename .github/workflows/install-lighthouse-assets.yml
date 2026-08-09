@@ -1,0 +1,56 @@
+name: Install Lighthouse Assets
+
+on:
+  push:
+    branches:
+      - agent/farol-das-estrelas
+    paths:
+      - .github/workflows/install-lighthouse-assets.yml
+
+permissions:
+  contents: write
+
+jobs:
+  install-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/farol-das-estrelas
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download original kit from public Google Drive
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet gdown
+          gdown --fuzzy 'https://drive.google.com/file/d/1D1NpMzJIOSBAs5QChQbiUze81BVHhWRz/view?usp=sharing' -O /tmp/farol-das-estrelas-hd.zip
+          test "$(stat -c%s /tmp/farol-das-estrelas-hd.zip)" = "130674133"
+          echo '0ab12decb4bd85ff1cb5aae74c0031ebcb37a4dbef1383815171c4d636c1a12a  /tmp/farol-das-estrelas-hd.zip' | sha256sum -c -
+
+      - name: Install assets without image processing
+        run: npm run assets:farol -- /tmp/farol-das-estrelas-hd.zip
+
+      - name: Validate all PNG hashes in repository
+        shell: bash
+        run: |
+          cd public/assets/farol-das-estrelas
+          sha256sum -c docs/SHA256SUMS.txt
+
+      - name: Commit original assets to branch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/assets/farol-das-estrelas
+          if git diff --cached --quiet; then
+            echo 'No asset changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Adiciona assets originais do Farol das Estrelas'
+          git push origin HEAD:agent/farol-das-estrelas
