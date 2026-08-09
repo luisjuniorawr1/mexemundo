@@ -1,0 +1,79 @@
+{
+  "story": "O Farol das Estrelas",
+  "version": 1,
+  "resolution": {
+    "backgrounds": "3840x2160",
+    "isolatedAssets": "PNG transparente em alta resolução"
+  },
+  "paths": {
+    "backgrounds": [
+      "backgrounds/bg_village_night.png",
+      "backgrounds/bg_star_beach.png",
+      "backgrounds/bg_cloud_path.png",
+      "backgrounds/bg_wind_bridge.png",
+      "backgrounds/bg_crystal_garden.png",
+      "backgrounds/bg_lighthouse_dark.png",
+      "backgrounds/bg_lighthouse_powerup.png",
+      "backgrounds/bg_lighthouse_final.png",
+      "backgrounds/bg_star_sky_final.png"
+    ],
+    "characters": [
+      "characters/lume_idle.png",
+      "characters/lume_happy.png",
+      "characters/lume_surprised.png",
+      "characters/lume_worried.png",
+      "characters/lume_excited.png",
+      "characters/lume_proud.png",
+      "characters/lume_glow.png",
+      "characters/lume_pointing.png",
+      "characters/lume_flying.png",
+      "characters/lume_magic_spin.png",
+      "characters/lume_merge.png"
+    ],
+    "items": [
+      "items/star_fragment.png",
+      "items/star_fragment_power.png",
+      "items/crystal_off.png",
+      "items/crystal_on.png",
+      "items/big_star_broken.png",
+      "items/big_star_restored.png"
+    ],
+    "obstacles": [
+      "obstacles/cloud_obstacle.png",
+      "obstacles/wind_gust.png"
+    ],
+    "fx": [
+      "fx/magic_sparkles.png",
+      "fx/magic_success.png",
+      "fx/magic_retry.png",
+      "fx/light_trail.png",
+      "fx/star_collect_fx.png"
+    ],
+    "motionIcons": [
+      "motion-icons/icon_point.png",
+      "motion-icons/icon_move_side.png",
+      "motion-icons/icon_lean_side.png",
+      "motion-icons/icon_open_arms.png",
+      "motion-icons/icon_raise_hand.png",
+      "motion-icons/icon_hands_together.png",
+      "motion-icons/icon_raise_arms.png",
+      "motion-icons/motion_arrow_left_right.png",
+      "motion-icons/motion_arrow_up.png",
+      "motion-icons/motion_arrow_center.png"
+    ],
+    "ui": [
+      "ui/guide_arrow.png",
+      "ui/star_progress_empty.png",
+      "ui/star_progress_full.png",
+      "ui/dialog_box.png",
+      "ui/btn_continue.png",
+      "ui/btn_replay.png",
+      "ui/icon_audio.png"
+    ],
+    "screens": [
+      "screens/cover_star_lighthouse.png",
+      "screens/story_complete.png",
+      "screens/adventure_map.png"
+    ]
+  }
+}
