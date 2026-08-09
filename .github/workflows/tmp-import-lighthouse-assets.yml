@@ -1,12 +1,11 @@
 name: Temporary Lighthouse Asset Import
 
 on:
-  pull_request:
+  push:
     branches:
       - main
-    types:
-      - synchronize
-      - reopened
+    paths:
+      - .github/workflows/tmp-import-lighthouse-assets.yml
 
 permissions:
   contents: write
