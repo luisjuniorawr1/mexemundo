@@ -17,6 +17,25 @@ A integração deve preservar os arquivos **byte a byte**:
 
 O jogo já aponta para os nomes e subpastas registrados em `manifest.json`. Enquanto algum PNG estiver ausente no repositório, a história mantém o fallback procedural correspondente.
 
+## Instalação do kit original
+
+Com o ZIP original disponível no checkout do projeto, execute:
+
+```bash
+npm run assets:farol -- /caminho/farol-das-estrelas-hd.zip
+```
+
+Também é possível informar o diretório `farol-das-estrelas/` já extraído.
+
+O instalador `scripts/install-lighthouse-assets.mjs`:
+
+1. valida os 176 PNGs do kit contra `docs/SHA256SUMS.txt` antes da cópia;
+2. copia os arquivos usando `copyFileSync`, sem processamento de imagem;
+3. valida novamente os 176 SHA-256 no destino;
+4. falha imediatamente se qualquer arquivo estiver ausente ou tiver um único byte diferente.
+
+Teste realizado com o pacote recebido: **176/176 arquivos aprovados antes e depois da cópia**.
+
 ## Organização do kit
 
 - `backgrounds/` — 9 cenários HD;
